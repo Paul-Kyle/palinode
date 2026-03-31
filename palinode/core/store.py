@@ -16,7 +16,7 @@ import sqlite_vec
 import json
 import os
 import hashlib
-from typing import Any
+from typing import Any, Sequence
 from datetime import datetime
 from palinode.core.config import config
 
@@ -72,6 +72,25 @@ def get_db() -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     return db
 
+
+def _validated_embedding_dimensions() -> int:
+    """Ensure embedding dimensions are numeric before interpolating into DDL."""
+    try:
+        dimensions = int(config.embeddings.primary.dimensions)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Embedding dimensions must be a positive integer") from exc
+    if dimensions <= 0:
+        raise ValueError("Embedding dimensions must be a positive integer")
+    return dimensions
+
+
+def _parameterize_in_clause(values: Sequence[Any]) -> tuple[str, tuple[Any, ...]]:
+    """Build placeholder-only IN clauses while keeping values parameterized."""
+    params = tuple(values)
+    if not params:
+        raise ValueError("IN clause values must not be empty")
+    return ",".join("?" for _ in params), params
+
 def init_db() -> None:
     """Initializes the required tables in the database.
 
@@ -80,6 +99,7 @@ def init_db() -> None:
     """
     os.makedirs(os.path.dirname(config.db_path), exist_ok=True)
     db = get_db()
+    dimensions = _validated_embedding_dimensions()
     db.execute("""
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
@@ -121,7 +141,7 @@ def init_db() -> None:
     db.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS triggers_vec USING vec0(
             id TEXT PRIMARY KEY,
-            embedding FLOAT[{config.embeddings.primary.dimensions}]
+            embedding FLOAT[{dimensions}]
         )
     """)
 
@@ -141,7 +161,7 @@ def init_db() -> None:
     db.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
             id TEXT PRIMARY KEY,
-            embedding FLOAT[{config.embeddings.primary.dimensions}]
+            embedding FLOAT[{dimensions}]
         )
     """)
 
@@ -255,9 +275,9 @@ def delete_file_chunks(file_path: str) -> None:
             except Exception:
                 pass  # FTS5 may be out of sync — periodic rebuild handles this
         
-        placeholders = ','.join('?' * len(ids))
-        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", ids)
-        cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", ids)
+        placeholders, params = _parameterize_in_clause(ids)
+        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", params)
+        cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", params)
         
     cursor.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
     db.commit()
@@ -719,7 +739,7 @@ def search_associative(
         if not activated_list:
             break
         
-        ph = ','.join('?' * len(activated_list))
+        ph, activated_params = _parameterize_in_clause(activated_list)
         rows = db.execute(f"""
             SELECT DISTINCT e2.entity_ref, COUNT(*) as co_count
             FROM entities e1
@@ -729,7 +749,7 @@ def search_associative(
             GROUP BY e2.entity_ref
             ORDER BY co_count DESC
             LIMIT 20
-        """, activated_list).fetchall()
+        """, activated_params).fetchall()
         
         for row in rows:
             neighbor = row[0]
@@ -753,13 +773,13 @@ def search_associative(
         db.close()
         return []
     
-    ph = ','.join('?' * len(activated_entities))
+    ph, entity_params = _parameterize_in_clause(activated_entities)
     files = db.execute(f"""
         SELECT DISTINCT e.file_path, MAX(?) as activation_score
         FROM entities e
         WHERE e.entity_ref IN ({ph})
         GROUP BY e.file_path
-    """, [max(activation.values())] + activated_entities).fetchall()
+    """, (max(activation.values()), *entity_params)).fetchall()
     
     db.close()
     
@@ -960,5 +980,4 @@ def score_with_decay(
     frequency_boost = 1 + math.log1p(recall_count)
     
     return min(base_score * importance * decay * frequency_boost, 1.0)
-
 

@@ -78,9 +78,20 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
+function resolveWithin(baseDir: string, ...segments: string[]): string | null {
+  const root = path.resolve(baseDir);
+  const candidate = path.resolve(root, ...segments);
+  const relative = path.relative(root, candidate);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    return candidate;
+  }
+  return null;
+}
+
 /** Load scrub patterns from specs/scrub-patterns.yaml and apply to text */
 function scrubSensitive(text: string, palinodeDir: string): string {
-  const scrubFile = path.join(palinodeDir, "specs", "scrub-patterns.yaml");
+  const scrubFile = resolveWithin(palinodeDir, "specs", "scrub-patterns.yaml");
+  if (!scrubFile) return text;
   const raw = readFileIfExists(scrubFile);
   if (!raw) return text;
 
@@ -135,7 +146,10 @@ const palinodePlugin = {
 
   register(api: OpenClawPluginApi) {
     const cfg = palinodeConfigSchema.parse(api.pluginConfig);
-    const promptsDir = path.join(cfg.palinodeDir, cfg.promptsDir);
+    const promptsDir = resolveWithin(cfg.palinodeDir, cfg.promptsDir);
+    if (!promptsDir) {
+      throw new Error("palinode promptsDir must stay within palinodeDir");
+    }
 
     api.logger.info(
       `openclaw-palinode: registered (api: ${cfg.palinodeApiUrl}, dir: ${cfg.palinodeDir}, autoRecall: ${cfg.autoRecall}, autoCapture: ${cfg.autoCapture})`,
@@ -533,13 +547,15 @@ const palinodePlugin = {
             // No core injection — the model still has turn 1's context
           } else {
             for (const dir of dirsToScan) {
-              const fullDir = path.join(cfg.palinodeDir, dir);
+              const fullDir = resolveWithin(cfg.palinodeDir, dir);
+              if (!fullDir) continue;
               if (!fs.existsSync(fullDir)) continue;
               const files = fs
                 .readdirSync(fullDir)
                 .filter((f: string) => f.endsWith(".md"));
               for (const file of files) {
-                const filePath = path.join(fullDir, file);
+                const filePath = resolveWithin(fullDir, file);
+                if (!filePath) continue;
                 const content = readFileIfExists(filePath);
                 if (content && isCoreFile(content)) {
                   const summaryMatch = content.match(/^summary:\s*["']?(.+?)["']?\s*$/m);
@@ -627,7 +643,11 @@ const palinodePlugin = {
               });
               if (triggers && triggers.length > 0) {
                   triggerContent = triggers.map((t: any) => {
-                      const content = readFileIfExists(path.join(cfg.palinodeDir, t.memory_file));
+                      const triggerPath = resolveWithin(cfg.palinodeDir, t.memory_file);
+                      if (!triggerPath) {
+                          return `\n[TRIGGER SKIPPED: ${t.description}] -> Unsafe path: ${t.memory_file}`;
+                      }
+                      const content = readFileIfExists(triggerPath);
                       if (content) {
                           return `\n\n--- Triggered: ${t.description} (${t.memory_file}) ---\n${content.slice(0, 2000)}`;
                       } else {
@@ -693,12 +713,12 @@ const palinodePlugin = {
         try {
           // Read PROGRAM.md for behavior instructions
           const programContent = readFileIfExists(
-            path.join(cfg.palinodeDir, "PROGRAM.md"),
+            resolveWithin(cfg.palinodeDir, "PROGRAM.md") ?? "",
           );
 
           // Read extraction prompt
           const extractionPrompt = readFileIfExists(
-            path.join(promptsDir, "extraction.md"),
+            resolveWithin(promptsDir, "extraction.md") ?? "",
           );
 
           if (!extractionPrompt) {
@@ -749,7 +769,11 @@ const palinodePlugin = {
           //
           // For MVP: save a session summary to daily/
           const today = new Date().toISOString().split("T")[0];
-          const dailyPath = path.join(cfg.palinodeDir, "daily", `${today}.md`);
+          const dailyPath = resolveWithin(cfg.palinodeDir, "daily", `${today}.md`);
+          if (!dailyPath) {
+            api.logger.warn("openclaw-palinode: unsafe daily path during auto-capture");
+            return;
+          }
           const dirPath = path.dirname(dailyPath);
           if (!fs.existsSync(dirPath)) {
             fs.mkdirSync(dirPath, { recursive: true });
@@ -861,7 +885,11 @@ const palinodePlugin = {
         if (formattedMessages.length === 0) return;
 
         const today = new Date().toISOString().split("T")[0];
-        const dailyPath = path.join(cfg.palinodeDir, "daily", `${today}.md`);
+        const dailyPath = resolveWithin(cfg.palinodeDir, "daily", `${today}.md`);
+        if (!dailyPath) {
+          api.logger.warn("openclaw-palinode: unsafe daily path during /new flush");
+          return;
+        }
         const sessionSummary = `\n\n## /new flush — ${new Date().toISOString()}\n\n${formattedMessages.join("\n\n").slice(0, 3000)}\n`;
 
         const existing = readFileIfExists(dailyPath) || `# Daily Notes — ${today}\n`;

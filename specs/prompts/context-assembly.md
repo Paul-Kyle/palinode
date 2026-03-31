@@ -18,7 +18,7 @@ Load all files with `core: true` in frontmatter. No search, no ranking — just 
 ```yaml
 # Palinode Core Memory
 user:
-  name: Paul
+  name: Alice
   location: Santa Clarita, CA
   roles: [film/video faculty, software developer]
 

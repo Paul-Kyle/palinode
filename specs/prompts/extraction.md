@@ -57,7 +57,7 @@ Return a JSON array of memory items. Each item must match one of these schemas:
     "type": "ActionItem",
     "slug": "send-peter-5act-proposal",
     "content": "Send Alice the checkout flow proposal",
-    "assignee": "Paul",
+    "assignee": "Alice",
     "due": "2026-03-25",
     "entities": ["person/peter", "project/mm-kmd"],
     "confidence": 0.85

@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import re
 import time
-import hashlib
 import logging
 import subprocess
 from pathlib import Path
@@ -26,6 +25,7 @@ import socket
 import ipaddress
 
 from palinode.core.config import config
+from palinode.core.hashing import stable_md5_hexdigest
 
 logger = logging.getLogger("palinode.ingest")
 
@@ -305,7 +305,7 @@ def write_research_file(
     filepath = os.path.join(config.palinode_dir, "research", filename)
 
     if os.path.exists(filepath):
-        slug += f"-{hashlib.md5(content[:100].encode()).hexdigest()[:6]}"
+        slug += f"-{stable_md5_hexdigest(content[:100])[:6]}"
         filename = f"{today}-{slug}.md"
         filepath = os.path.join(config.palinode_dir, "research", filename)
 

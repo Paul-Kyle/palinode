@@ -26,13 +26,13 @@ import json
 import os
 import re
 import logging
-import hashlib
 from collections import defaultdict
 from datetime import datetime
 
 import httpx
 
 from palinode.core.config import config
+from palinode.core.hashing import stable_md5_hexdigest
 
 logger = logging.getLogger("palinode.migration.mem0_classify")
 
@@ -57,7 +57,7 @@ def deduplicate(memories: list[dict]) -> list[dict]:
     for m in memories:
         h = m.get("hash", "")
         if not h:
-            h = hashlib.md5(m["content"].encode()).hexdigest()
+            h = stable_md5_hexdigest(m["content"])
         if h in by_hash:
             # Keep the newer one
             if m.get("created_at", "") > by_hash[h].get("created_at", ""):

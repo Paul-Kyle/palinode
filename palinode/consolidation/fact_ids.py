@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import os
 import re
-import hashlib
 from palinode.core.config import config
 from palinode.core import parser
+from palinode.core.hashing import stable_md5_hexdigest
 
 
 def generate_fact_id(file_path: str, line_text: str) -> str:
@@ -21,7 +21,7 @@ def generate_fact_id(file_path: str, line_text: str) -> str:
     Example: mm-kmd-arch-a3f2b1
     """
     file_slug = os.path.splitext(os.path.basename(file_path))[0]
-    content_hash = hashlib.md5(line_text.strip().encode()).hexdigest()[:6]
+    content_hash = stable_md5_hexdigest(line_text.strip())[:6]
     return f"{file_slug}-{content_hash}"
 
 

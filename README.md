@@ -11,13 +11,34 @@ Git-native. Markdown-first. No database required.
 
 ## The Problem
 
-AI agents wake up with amnesia every session. They don't remember who you are, what you're working on, or what was decided yesterday. Current solutions either don't scale (flat files), produce uncurated noise (vector-only stores), or lock you into opaque databases you can't inspect.
+AI agents wake up with amnesia every session. They don't remember who you are, what you're working on, or what was decided yesterday. You waste turns re-explaining context that should already be there. Current solutions either don't scale (flat files), produce uncurated noise (vector-only stores), or lock you into opaque databases you can't inspect.
 
 ## The Solution
 
-Palinode is persistent memory for LLM agents that stores everything as **typed markdown files** — human-readable, git-versioned, greppable. A hybrid search index (SQLite-vec + BM25) makes memories searchable by meaning *and* keyword. An MCP server exposes 13 tools so Claude Code, OpenClaw, Hermes, or any MCP client can search, save, and manage memories. An OpenClaw plugin handles automatic context injection and capture.
+Palinode gives your agent **14 MCP tools and a memory directory** — the agent decides what to remember, what to search, and when to consolidate. No rigid pipeline. No framework lock-in. Just tools, files, and git.
 
-Works with any LLM backend. Tested with OLMo, Qwen, and Claude. If every service crashes, `cat` still works.
+An MCP server works with Claude Code, Cursor, Codex, Antigravity, OpenClaw, or any MCP client. A session skill auto-captures milestones during coding. A deterministic executor handles compaction — the LLM proposes operations, the executor applies them. The LLM never touches your files directly.
+
+Storage is typed markdown with YAML frontmatter. Search is hybrid BM25 + vector. History is git. Works with any LLM backend. If every service crashes, `cat` still works.
+
+### Built for model step-changes
+
+Most AI systems accumulate "compensating complexity" — workarounds for the last model's weaknesses that become constraints when a better model arrives. Palinode is designed to survive model upgrades:
+
+- **Tools are the interface, not a pipeline.** Your agent calls `palinode_search` when it needs context, not because a pipeline forces 300 tokens of search results into every turn. Smarter models make better retrieval decisions on their own.
+- **The executor is deterministic.** The LLM proposes KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE. The executor validates and applies. Swap the LLM, keep the executor. ([ADR-001](docs/ADR-001-tools-over-pipeline.md))
+- **Files and git don't depend on any model.** Markdown, YAML, `git blame` — none of this changes when Mythos or GPT-5 drops.
+- **Auto-injection is optional scaffolding.** The OpenClaw plugin injects context automatically today (useful for current models). As models get smarter and use tools proactively, the injection pipeline becomes unnecessary — the tools remain.
+
+### What it costs
+
+| Turn | What happens | Tokens |
+|---|---|---|
+| Turn 1 | Core memory injected (people, projects, decisions) | ~4,200 |
+| Every turn after | Relevant search snippets for your message | **~300** |
+| Trivial messages ("ok", "yes", "👍") | Nothing — skipped automatically | **0** |
+
+~300 tokens per turn. Less than a sentence of output. The alternative — re-explaining your project every session — costs the same tokens with none of the benefit.
 
 ---
 
@@ -27,7 +48,7 @@ Most agent memory systems are opaque databases you can't inspect, flat files tha
 
 ### No other production system has these:
 
-- **Git blame/diff/rollback as agent tools** — not just git-compatible files, but `palinode_diff`, `palinode_blame`, and `palinode_rollback` as first-class MCP tools your agent can call. [DiffMem](https://github.com/search?q=diffmem) and Git-Context-Controller are PoCs; Palinode ships 13 MCP tools including 5 git operations.
+- **Git blame/diff/rollback as agent tools** — not just git-compatible files, but `palinode_diff`, `palinode_blame`, and `palinode_rollback` as first-class MCP tools your agent can call. [DiffMem](https://github.com/search?q=diffmem) and Git-Context-Controller are PoCs; Palinode ships 14 MCP tools including 5 git operations.
 
 - **Operation-based compaction with a deterministic executor** — the LLM outputs structured ops (KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE), a deterministic executor applies them. The LLM never touches your files directly. [All-Mem](https://arxiv.org/search/?query=all-mem+memory) does something similar on graph nodes; Palinode does it on plain markdown with git commits.
 
@@ -421,39 +442,89 @@ Available in OpenClaw conversations and Claude Code (via MCP):
 
 ---
 
+## How Palinode Compares
+
+### vs MEMORY.md (OpenClaw/Hermes built-in)
+
+| | MEMORY.md | Palinode |
+|---|---|---|
+| **Storage** | One flat file, grows until truncated | Typed files (people, projects, decisions, insights) |
+| **Injection** | Dump entire file into prompt (~5K tokens, truncated at 18K chars) | 4-phase: core summaries on turn 1 (~4K tokens), search snippets per turn (~300 tokens) |
+| **Search** | None — `grep` or read the whole thing | Hybrid BM25 + vector, ranked by relevance |
+| **Scaling** | Gets worse over time (bigger file = more truncation) | Gets *better* over time (nightly consolidation compacts, not appends) |
+| **History** | None — edits overwrite | Git blame every line, rollback any change |
+| **Multi-agent** | One file per agent, no sharing | Shared memory dir, entity cross-references |
+| **When it breaks** | File missing = total amnesia | Services down = `cat` and `grep` still work |
+
+MEMORY.md costs ~5,000 tokens per session to inject a file that gets staler every week. Palinode costs ~300 tokens per turn and stays fresh via nightly consolidation.
+
+### vs Mem0
+
+| | Mem0 | Palinode |
+|---|---|---|
+| **Storage** | Qdrant vectors + graph DB (opaque) | Markdown files (human-readable, editable) |
+| **Search** | Vector similarity only | Hybrid BM25 + vector (RRF fusion) |
+| **Inspection** | Need API/dashboard to see what's stored | `cat`, `grep`, VS Code, Obsidian — any text editor |
+| **History** | Audit logs in DB | `git blame`, `git diff`, `git rollback` as agent tools |
+| **Compaction** | Behavior summaries (lossy) | Operation-based KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE (non-lossy) |
+| **Offline** | Qdrant must be running | Files exist on disk regardless |
+| **MCP tools** | 4-6 (save, search, list, delete) | 14 (+ git ops, triggers, session capture) |
+| **Portability** | Tied to Qdrant instance | `cp -r` to any machine, or push to GitHub |
+
+Mem0 is a black box. Palinode is a directory. If you can `ls`, you can understand your agent's memory.
+
+---
+
 ## Design Philosophy
 
 Palinode makes specific bets about how agent memory should work:
 
-1. **Files are truth.** Not databases, not vector stores, not APIs. Markdown files that humans can read, edit, and version with git.
+1. **Tools, not pipelines.** Give the model capabilities (search, save, diff, rollback). Let it decide when to use them. Don't force retrieval into every turn — let smarter models make smarter retrieval decisions.
 
-2. **Typed, not flat.** People, projects, decisions, insights — each has structure. This enables reliable retrieval and consolidation.
+2. **Files are truth.** Not databases, not vector stores, not APIs. Markdown files that humans can read, edit, and version with git. This survives any model change.
 
-3. **Consolidation, not accumulation.** 100 sessions should produce 20 well-maintained files, not 100 unread dumps. Memory gets smaller and more useful over time.
+3. **Outcomes, not procedures.** Tell the consolidation LLM *what* to achieve ("keep what's true, archive what's stale"), not *how* to do it step by step. The less your system prescribes, the more it gains from a smarter model.
 
-4. **Invisible when working.** The human talks to their agent. Palinode works behind the scenes. The only visible outputs are better conversations.
+4. **Consolidation, not accumulation.** 100 sessions should produce 20 well-maintained files, not 100 unread dumps. Memory gets smaller and more useful over time.
 
 5. **Graceful degradation.** Vector index down → read files directly. Embedding service down → grep. Machine off → it's a git repo, clone it anywhere.
 
-6. **Zero taxonomy burden.** The system classifies. The human reviews. If the human has to maintain a taxonomy, the system dies.
+6. **Zero compensating complexity.** Every workaround for a model's weakness is technical debt that breaks on the next model. Separate business rules (keep forever) from model scaffolding (delete on upgrade). ([ADR-001](docs/ADR-001-tools-over-pipeline.md))
 
 ---
 
 ## Roadmap
 
-| Phase | Status | What |
-|---|---|---|
-| 0 — MVP | ✅ Done | Core Python, watcher, API, SQLite-vec |
-| 0.5 — Capture | ✅ Done | Plugin, dual embeddings, -es capture, inbox pipeline |
-| 1 — Config + Quality | ✅ Done | Config YAML, docstrings, type hints, bug fixes |
-| 1.5 — Hybrid Search | ✅ Done | BM25 + vector RRF, content-hash dedup |
-| 2 — Consolidation | ✅ Done | Entity linking, temporal memory |
-| 3 — Migration | ✅ Done | Mem0 backfill, automated migration pipelines |
-| 4 — Git Tools | ✅ Done | Memory diffing, blame, CLI timeline, remote push |
-| 5 — Compaction | ✅ Done | Operation-based compaction, layered core files |
-| 5.5 — Recall+ | ✅ Done | Associative entity search, prospective triggers, temporal decay |
+### Shipped (v0.5)
+| What | Details |
+|---|---|
+| Core system | Typed markdown, SQLite-vec, FTS5, FastAPI, file watcher |
+| 14 MCP tools | search, save, ingest, status, history, entities, consolidate, diff, blame, timeline, rollback, push, trigger, session_end |
+| Hybrid search | BM25 + vector + Reciprocal Rank Fusion |
+| Git provenance | blame, diff, rollback, push as agent-callable tools |
+| Operation-based compaction | KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE with deterministic executor |
+| Session skill | Auto-captures milestones across Claude Code, Cursor, Codex, Antigravity |
+| Nightly consolidation | Cron-driven via local LLM (OLMo, any 7B+) |
+| OpenClaw plugin | 4-phase injection + session capture |
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full research-informed roadmap.
+### Next (v1.0) — Tools-first architecture
+| What | Why |
+|---|---|
+| Optional injection pipeline | Make auto-injection configurable. Default to tools-first for Mythos-class models |
+| `palinode_list` + `palinode_read` | Browse and read memory files from any MCP client |
+| Prompt storage (`prompts/` category) | Reusable prompt templates as searchable memories |
+| Gemini multimodal embeddings | Index images, PDFs alongside text memories |
+| Hermes Agent contribution | Submit palinode skill to NousResearch |
+| Homebrew tap | `brew install palinode` |
+
+### Future (v2.0) — Model-agnostic memory infrastructure
+| What | Why |
+|---|---|
+| Tools-only mode | Remove pipeline entirely. Model decides all retrieval |
+| Outcome-based compaction prompts | Replace procedural prompts with goal specs |
+| Clean package architecture | `store/`, `recall/`, `compaction/` modules |
+| Mintlify docs site | Searchable documentation |
+| Community memory templates | Shared starter memories for common domains |
 
 ---
 
@@ -521,4 +592,4 @@ MIT
 
 ---
 
-*Built by [Paul Kyle](https://github.com/Paul-Kyle) with help from AI agents who use Palinode to remember building Palinode.* 🧠
+*Built by [Paul Kyle](https://phasespace.co) ([@Paul-Kyle](https://github.com/Paul-Kyle)) with Claude Opus, Sonnet, Gemini, Codex, and OLMo — AI agents who use Palinode to remember building Palinode.* 🧠

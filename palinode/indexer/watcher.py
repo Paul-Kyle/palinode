@@ -21,6 +21,7 @@ import urllib.request
 
 from palinode.core import store, embedder, parser
 from palinode.core.config import config
+from palinode.core.hashing import stable_md5_hexdigest
 import json
 from datetime import datetime
 
@@ -130,7 +131,7 @@ class PalinodeHandler(FileSystemEventHandler):
         skipped = 0
         valid_chunk_ids = []
         for sec in sections:
-            chunk_id = hashlib.md5(f"{filepath}#{sec['section_id']}".encode()).hexdigest()
+            chunk_id = stable_md5_hexdigest(f"{filepath}#{sec['section_id']}")
             valid_chunk_ids.append(chunk_id)
             content_hash = hashlib.sha256(sec["content"].encode()).hexdigest()
 
