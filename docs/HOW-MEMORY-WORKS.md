@@ -183,9 +183,10 @@ Alice wants async check-ins instead of meetings -es
 
 ## 4. Weekly Consolidation (Sunday 3am UTC)
 
-**Script:** `palinode/consolidation/runner.py`
-**LLM:** Configurable in `palinode.config.yaml` (any OpenAI-compatible endpoint)
-**Schedule:** `0 3 * * 0` (crontab, configurable)
+**Script:** `palinode/consolidation/runner.py`  
+**LLM:** OLMo 3.1:32b on vLLM (localhost:8000)  
+**Schedule:** `0 3 * * 0` (crontab)  
+**Prompt:** `specs/prompts/consolidation.md`
 
 The consolidation cron is where raw daily logs become curated memory.
 
@@ -331,16 +332,16 @@ The entity index is a reverse lookup: given an entity, find all files that menti
 
 ---
 
-## 8. Configuration
+## 8. Behavioral Spec: PROGRAM.md
 
-All behavior is controlled via `palinode.config.yaml`:
+`PROGRAM.md` is the behavioral specification for the memory manager. It controls:
 
-- Embedding model and endpoint
-- Search parameters (hybrid weight, thresholds)
-- Consolidation schedule, LLM model, and temperature
-- Temporal decay curves per memory type
+- What to extract (and what to ignore)
+- Aggressiveness thresholds
+- Consolidation rules
+- Quality standards
 
-To change consolidation behavior, update the config — no code changes needed.
+The consolidation runner uses the prompt in `specs/prompts/compaction.md`. To change consolidation behavior, edit that file — no code changes needed. (PROGRAM.md documents overall agent behavior, not the consolidation runner specifically.)
 
 ---
 

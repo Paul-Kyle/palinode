@@ -20,7 +20,7 @@ cp -r ~/palinode/plugin ~/.openclaw/extensions/openclaw-palinode
 openclaw gateway restart
 ```
 
-Full guide: `docs/QUICKSTART.md` in the repo.
+Full guide: `docs/INSTALL-OPENCLAW.md` in the repo.
 
 ## Key Config Options (palinode.config.yaml)
 

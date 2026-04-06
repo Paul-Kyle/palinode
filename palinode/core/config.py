@@ -160,6 +160,7 @@ class ConsolidationConfig:
     # LLM for consolidation tasks (OpenAI-compatible API)
     llm_url: str = "http://localhost:8000"
     llm_model: str = "/model"
+    llm_fallbacks: list[dict] = field(default_factory=list)
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
 
@@ -339,6 +340,8 @@ def load_config() -> Config:
         cfg.embeddings.primary.model = os.environ["EMBEDDING_MODEL"]
     if "GEMINI_API_KEY" in os.environ:
         cfg.embeddings.research.enabled = True
+    if "PALINODE_API_HOST" in os.environ:
+        cfg.services.api.host = os.environ["PALINODE_API_HOST"]
     if "PALINODE_API_PORT" in os.environ:
         try:
             cfg.services.api.port = int(os.environ["PALINODE_API_PORT"])

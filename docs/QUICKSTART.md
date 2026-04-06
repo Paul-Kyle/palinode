@@ -155,9 +155,9 @@ Content here.
 ├── insights/*.md           ← lessons learned
 ├── research/*.md           ← reference material
 ├── daily/*.md              ← session logs
-├── specs/prompts/*.md      ← consolidation prompts (customizable)
-├── PROGRAM.md              ← behavioral spec (what to remember, extraction rules)
-└── palinode.config.yaml    ← all settings (models, search, consolidation)
+├── specs/prompts/*.md      ← system prompts (read by the memory manager)
+├── PROGRAM.md              ← memory manager behavioral spec
+└── PRD.md                  ← what Palinode is
 ```
 
 ## Ports & Services

@@ -11,10 +11,10 @@ Usage:
     python -m palinode.migration.mem0_classify
 
 Input:
-    ./migration/mem0_export.json
+    ~/clawd/palinode/migration/mem0_export.json
 
 Output:
-    ./migration/mem0_classified.json
+    ~/clawd/palinode/migration/mem0_classified.json
 
 LLM Config:
     URL: http://localhost:8080/v1 (Mac Studio Qwen 72B)

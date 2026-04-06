@@ -126,8 +126,7 @@ graph TD
 | CLI | Click (wraps REST API) | Agents, scripts, cron — 8x fewer tokens than MCP |
 | MCP | Python MCP SDK (stdio) | IDEs only (Claude Desktop, Antigravity, Cursor) |
 | Plugin | OpenClaw Plugin SDK | Lifecycle hooks for session inject/extract |
-| Behavior | [`PROGRAM.md`](PROGRAM.md) | What to remember, how to extract, consolidation rules |
-| Config | `palinode.config.yaml` | All settings — models, endpoints, search, consolidation schedule |
+| Behavior spec / Schema | `PROGRAM.md` | The wiki schema — change how the memory manager extracts, classifies, and consolidates by editing one file |
 
 ---
 
@@ -228,7 +227,7 @@ palinode search "LoRA training curation"
 palinode search "Peter" --type PersonMemory --top-k 5
 
 # Save a memory
-palinode save "Qwen 14B replaces 7B on GPU server" --type Decision --entity infra/gpu-server
+palinode save "Qwen 14B replaces 7B on 5060 GPU" --type Decision --entity infra/5060
 
 # Check system health
 palinode status
@@ -257,10 +256,40 @@ palinode search "query"
 
 ### 4b. Use from Claude Code / IDEs (MCP)
 
-MCP is best for IDEs where tool discovery and typed schemas matter (Claude Desktop, Claude Code, Antigravity, Cursor).
+MCP is best for IDEs where tool discovery and typed schemas matter (Claude Desktop, Claude Code, Antigravity, Cursor, Zed).
 
-Add to `~/.claude/claude_desktop_config.json`:
+**Option 1: Remote HTTP** (recommended for remote setups — works with any IDE):
 
+Start the MCP HTTP server on your Palinode host:
+```bash
+PALINODE_DIR=~/.palinode palinode-mcp-sse    # listens on :6341
+```
+
+Then point your IDE at the URL:
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/"
+    }
+  }
+}
+```
+
+**Option 2: Local stdio** (same machine):
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "command": "python",
+      "args": ["-m", "palinode.mcp"],
+      "env": { "PALINODE_DIR": "/Users/youruser/.palinode" }
+    }
+  }
+}
+```
+
+**Option 3: SSH stdio** (remote, stdio-only clients):
 ```json
 {
   "mcpServers": {
@@ -274,9 +303,9 @@ Add to `~/.claude/claude_desktop_config.json`:
 }
 ```
 
-See [docs/claude-code-setup.md](docs/claude-code-setup.md) for details.
+See [docs/INSTALL-CLAUDE-CODE.md](docs/INSTALL-CLAUDE-CODE.md) for full setup details including systemd units, Tailscale, and per-IDE configuration.
 
-> **CLI vs MCP — when to use which:** CLI for agents, scripts, cron jobs, and SSH access (lower overhead, 8x fewer tokens than MCP schema loading). MCP for IDEs where you want tool discovery in the chat UI. Both hit the same REST API. See `specs/palinode-cli-spec.md` for the full rationale.
+> **CLI vs MCP — when to use which:** CLI for agents, scripts, cron jobs, and SSH access (lower overhead, 8x fewer tokens than MCP schema loading). MCP for IDEs where you want tool discovery in the chat UI. Both hit the same REST API.
 
 ### 5. Install the session skill (recommended)
 
@@ -308,7 +337,7 @@ cp -r plugin/ ~/.openclaw/extensions/openclaw-palinode
 
 The plugin provides `before_agent_start` (inject), `agent_end` (extract), and `-es` capture hooks.
 
-**Migrating from another memory system?** Palinode replaces Mem0-style key-value stores with structured, git-versioned markdown. See the CLI migration tools (`palinode migrate-mem0`).
+**Already using OpenClaw's built-in memory?** See [docs/INSTALL-OPENCLAW-MIGRATION.md](docs/INSTALL-OPENCLAW-MIGRATION.md) for what to disable (MEMORY.md, Mem0, session-memory hook) and why Palinode replaces all of them with ~5,700 fewer tokens per session.
 
 ---
 
@@ -433,38 +462,10 @@ embeddings:
     url: http://localhost:11434
 ```
 
+### Remote Model Endpoints (Mac Studio)
+If you are running the `start_mlx_servers.sh` script on the Mac Studio, the following MLX models are exposed on the network:
+
 See [palinode.config.yaml.example](palinode.config.yaml.example) for the complete reference with all defaults.
-
-### Swapping Models
-
-All models are configured in `palinode.config.yaml`. No code changes needed.
-
-**Embeddings** — any Ollama model that outputs vectors:
-```yaml
-embeddings:
-  primary:
-    provider: ollama
-    model: bge-m3              # or nomic-embed-text, mxbai-embed-large, etc.
-    url: http://localhost:11434
-```
-
-**Consolidation LLM** — any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter):
-```yaml
-consolidation:
-  llm_model: "llama3.1:8b"              # any chat model that outputs JSON
-  llm_url: "http://localhost:11434"      # Ollama, vLLM, or any OpenAI-compat server
-
-  # Optional fallback chain — tried in order if primary fails
-  llm_fallbacks:
-    - model: "qwen2.5:14b-instruct"
-      url: "http://localhost:11434"
-    - model: "llama3.1:8b"
-      url: "http://backup-server:11434"
-```
-
-**Consolidation prompts** — `specs/prompts/compaction.md` and `specs/prompts/update.md` define how the LLM makes compaction decisions. The included starters work out of the box; customize the rules to tune behavior for your use case.
-
-> Smaller models (7-8B) work but may produce less reliable JSON for compaction operations. The `json-repair` library (included) catches most malformed output. 14B+ models are recommended for production consolidation.
 
 ---
 
@@ -550,7 +551,7 @@ Palinode makes specific bets about how agent memory should work:
 | 5 — Compaction | ✅ Done | Operation-based compaction, layered core files |
 | 5.5 — Recall+ | ✅ Done | Associative entity search, prospective triggers, temporal decay |
 
-See [GitHub Issues](https://github.com/Paul-Kyle/palinode/issues) for what's next.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full research-informed roadmap.
 
 ---
 

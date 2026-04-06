@@ -4,6 +4,10 @@ Palinode MCP Server
 Exposes Palinode memory as MCP tools for Claude Code and other MCP clients.
 Runs over stdio — spawned on demand by the client.
 
+All tool implementations are thin HTTP wrappers around the Palinode API server.
+The MCP server itself holds no database connections, embedder state, or git handles.
+Set PALINODE_API_HOST to point at a remote API server (e.g. over Tailscale).
+
 Tools:
   palinode_search  — semantic search over memory files
   palinode_save    — write a new memory item
@@ -14,9 +18,10 @@ Usage (Claude Code / claude_desktop_config.json):
   {
     "mcpServers": {
       "palinode": {
-        "command": "ssh",
-        "args": ["user@your-server.example.com",
-                 "cd /path/to/palinode && venv/bin/python -m palinode.mcp"]
+        "command": "palinode-mcp",
+        "env": {
+          "PALINODE_API_HOST": "your-server"
+        }
       }
     }
   }
@@ -25,17 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import re
-import time
-from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 
-from palinode.core import embedder, store
 from palinode.core.config import config
 
 logger = logging.getLogger("palinode.mcp")
@@ -44,111 +45,67 @@ logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
 server = Server("palinode")
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── HTTP client helpers ──────────────────────────────────────────────────────
 
-def _utc_now() -> datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.now(UTC)
+def _api_url(path: str) -> str:
+    """Build full API URL from config host/port."""
+    host = config.services.api.host
+    port = config.services.api.port
+    return f"http://{host}:{port}{path}"
+
+
+async def _get(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
+    """Async HTTP GET to the API server."""
+    async with httpx.AsyncClient() as client:
+        return await client.get(_api_url(path), params=params, timeout=timeout)
+
+
+async def _post(path: str, json: dict | None = None, timeout: float = 30.0) -> httpx.Response:
+    """Async HTTP POST to the API server."""
+    async with httpx.AsyncClient() as client:
+        return await client.post(_api_url(path), json=json, timeout=timeout)
+
+
+async def _post_params(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
+    """Async HTTP POST with query params (no JSON body) to the API server."""
+    async with httpx.AsyncClient() as client:
+        return await client.post(_api_url(path), params=params, timeout=timeout)
+
+
+async def _delete(path: str, timeout: float = 30.0) -> httpx.Response:
+    """Async HTTP DELETE to the API server."""
+    async with httpx.AsyncClient() as client:
+        return await client.delete(_api_url(path), timeout=timeout)
+
+
+def _text(content: str) -> list[types.TextContent]:
+    """Shorthand for returning a single text result."""
+    return [types.TextContent(type="text", text=content)]
+
 
 def _format_results(results: list[dict[str, Any]]) -> str:
-    """Format search results as clean text — minimal context burn.
-
-    Args:
-        results (list[dict[str, Any]]): Retrieved database query outputs securely packing semantic text block values arrays targets metrics endpoints logics formats footprint.
-
-    Returns:
-        str: Block string concatenating cleanly formatted scores matches formats schemas layouts targets endpoints text formats footprint.
-    """
+    """Format search results as clean text — minimal context burn."""
     if not results:
         return "No results found."
     parts = []
     for r in results:
-        rel = r["file_path"].replace(config.palinode_dir + "/", "")
+        file_path = r.get("file_path", "")
+        # Strip absolute prefix if present
+        if "/" in file_path:
+            rel = file_path.rsplit("/palinode/", 1)[-1] if "/palinode/" in file_path else file_path
+        else:
+            rel = file_path
         score_pct = int(r.get("score", 0) * 100)
-        parts.append(f"[{rel}] ({score_pct}% match)\n{r['content'].strip()}")
+        freshness = r.get("freshness")
+        fresh_label = f" ✓ {freshness}" if freshness == "valid" else (f" ⚠ {freshness}" if freshness == "stale" else "")
+        parts.append(f"[{rel}] ({score_pct}% match){fresh_label}\n{r.get('content', '').strip()}")
     return "\n\n---\n\n".join(parts)
-
-
-def _save_memory(content: str, category_type: str, slug: str | None, entities: list[str], core: bool | None = None, source: str = "mcp") -> str:
-    """Write a memory file explicitly defining categories schemas formats target layouts blocks and return the absolute pathway string logic footprints payloads logic paths targets payloads.
-
-    Mirrors FastAPI `/save` overarching logics targeting DB disk persistence targets schemas block outputs schemas formats.
-
-    Args:
-        content (str): Text markdown payload schema.
-        category_type (str): Explicit mapping arrays types string payloads logic sequence schema targets.
-        slug (str | None): User manually formatted block logic array strings formats footprint payloads endpoints target layouts paths payloads targets sequences.
-        entities (list[str]): Relational tag logic.
-
-    Returns:
-        str: Destinational disk payload path natively schemas format logic blocks schemas formats sequences footprints natively endpoints payloads.
-    """
-    import yaml
-
-    type_map = {
-        "PersonMemory": "people",
-        "Decision": "decisions",
-        "ProjectSnapshot": "projects",
-        "Insight": "insights",
-        "ResearchRef": "research",
-        "ActionItem": "inbox",
-    }
-    category = type_map.get(category_type, "inbox")
-
-    if slug:
-        slug = re.sub(r'[^a-z0-9]+', '-', slug.lower()).strip('-')
-
-    if not slug:
-        slug = re.sub(r"[^a-z0-9]+", "-", content.split("\n")[0].lower()[:30]).strip("-")
-    if not slug:
-        slug = str(int(time.time()))
-
-    file_path = os.path.join(config.palinode_dir, category, f"{slug}.md")
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-    frontmatter = {
-        "id": f"{category}-{slug}",
-        "category": category,
-        "type": category_type,
-        "entities": entities or [],
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": source,
-    }
-    if core is not None:
-        frontmatter["core"] = core
-
-    doc = f"---\n{yaml.dump(frontmatter)}---\n\n{content}\n"
-    with open(file_path, "w") as f:
-        f.write(doc)
-
-    # Git commit (best-effort)
-    if config.git.auto_commit:
-        try:
-            import subprocess
-            subprocess.run(["git", "add", file_path], cwd=config.palinode_dir, check=False)
-            commit_msg = f"{config.git.commit_prefix} mcp-save: {category}/{slug}.md"
-            subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=config.palinode_dir,
-                check=False,
-            )
-            if config.git.auto_push:
-                subprocess.run(["git", "push"], cwd=config.palinode_dir, check=False)
-        except Exception:
-            pass
-
-    return file_path
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    """Generates MCP capabilities map declaring available API wrappers securely.
-
-    Returns:
-        list[types.Tool]: MCP payload array logically declaring interface logic mappings blocks schema schemas paths target formatting schemas formats schemas.
-    """
     return [
         types.Tool(
             name="palinode_list",
@@ -506,338 +463,272 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-    """Execute MCP callbacks depending logic footprints mapped cleanly targets schemas formats endpoints layouts.
-
-    Args:
-        name (str): Identifier map sequence payload key.
-        arguments (dict[str, Any]): Client payloads mapping inputs variables formats schema strings lists mappings.
-
-    Returns:
-        list[types.TextContent]: Standard MCP layout structure logic strings safely encapsulating return target outputs schemas mapped perfectly formats blocks layouts targets sequences frameworks layouts.
-    """
     try:
+        # ── list ──────────────────────────────────────────────────────────
         if name == "palinode_list":
-            category = arguments.get("category")
-            core_only = arguments.get("core_only", False)
-            import httpx
-            api_port = config.services.api.port
-            params = {}
-            if category: params["category"] = category
-            if core_only: params["core_only"] = "true"
-            
-            resp = httpx.get(f"http://localhost:{api_port}/list", params=params, timeout=30.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                if not data:
-                    return [types.TextContent(type="text", text="No files found.")]
-                parts = []
-                for f in data:
-                    c_tag = " [core]" if f.get("core") else ""
-                    parts.append(f"{f['file']} — {f['summary']}{c_tag}")
-                return [types.TextContent(type="text", text="\n".join(parts))]
-            return [types.TextContent(type="text", text=f"API Error: {resp.text}")]
+            params: dict[str, Any] = {}
+            if arguments.get("category"):
+                params["category"] = arguments["category"]
+            if arguments.get("core_only"):
+                params["core_only"] = "true"
 
+            resp = await _get("/list", params=params)
+            if resp.status_code != 200:
+                return _text(f"API Error: {resp.text}")
+            data = resp.json()
+            if not data:
+                return _text("No files found.")
+            parts = []
+            for f in data:
+                c_tag = " [core]" if f.get("core") else ""
+                parts.append(f"{f['file']} — {f.get('summary', '')}{c_tag}")
+            return _text("\n".join(parts))
+
+        # ── read ──────────────────────────────────────────────────────────
         elif name == "palinode_read":
-            file_path = arguments["file_path"]
-            import httpx
-            api_port = config.services.api.port
-            resp = httpx.get(f"http://localhost:{api_port}/read", params={"file_path": file_path, "meta": "true"}, timeout=30.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return [types.TextContent(type="text", text=data["content"])]
-            return [types.TextContent(type="text", text=f"Error reading file: {resp.text}")]
+            resp = await _get("/read", params={"file_path": arguments["file_path"], "meta": "true"})
+            if resp.status_code != 200:
+                return _text(f"Error reading file: {resp.text}")
+            return _text(resp.json()["content"])
 
+        # ── search ────────────────────────────────────────────────────────
         elif name == "palinode_search":
-            query = arguments["query"]
-            category = arguments.get("category")
-            limit = int(arguments.get("limit", config.search.default_limit))
-            date_after = arguments.get("date_after")
-            date_before = arguments.get("date_before")
+            body: dict[str, Any] = {"query": arguments["query"]}
+            if arguments.get("category"):
+                body["category"] = arguments["category"]
+            if arguments.get("limit"):
+                body["limit"] = int(arguments["limit"])
+            if arguments.get("date_after"):
+                body["date_after"] = arguments["date_after"]
+            if arguments.get("date_before"):
+                body["date_before"] = arguments["date_before"]
+            # Use MCP threshold, not API default
+            body["threshold"] = config.search.mcp_threshold
 
-            loop = asyncio.get_event_loop()
-            query_emb = await loop.run_in_executor(None, embedder.embed, query)
-            if not query_emb:
-                return [types.TextContent(type="text", text="Embedding service unavailable.")]
+            resp = await _post("/search", json=body, timeout=60.0)
+            if resp.status_code != 200:
+                return _text(f"Search failed: {resp.text}")
+            return _text(_format_results(resp.json()))
 
-            if config.search.hybrid_enabled:
-                results = await loop.run_in_executor(
-                    None,
-                    lambda: store.search_hybrid(
-                        query_text=query,
-                        query_embedding=query_emb,
-                        category=category,
-                        top_k=limit,
-                        threshold=config.search.mcp_threshold,
-                        hybrid_weight=config.search.hybrid_weight,
-                        date_after=date_after,
-                        date_before=date_before,
-                    ),
-                )
-            else:
-                results = await loop.run_in_executor(
-                    None,
-                    lambda: store.search(
-                        query_embedding=query_emb,
-                        category=category,
-                        top_k=limit,
-                        threshold=config.search.mcp_threshold,
-                        date_after=date_after,
-                        date_before=date_before,
-                    ),
-                )
-            return [types.TextContent(type="text", text=_format_results(results))]
-
+        # ── save ──────────────────────────────────────────────────────────
         elif name == "palinode_save":
-            content = arguments["content"]
-            category_type = arguments["type"]
-            slug = arguments.get("slug")
-            core = arguments.get("core")
-            entities = arguments.get("entities", [])
-            source = arguments.get("source", "mcp")
+            body = {
+                "content": arguments["content"],
+                "type": arguments["type"],
+                "source": arguments.get("source", "mcp"),
+            }
+            if arguments.get("slug"):
+                body["slug"] = arguments["slug"]
+            if arguments.get("core") is not None:
+                body["core"] = arguments["core"]
+            if arguments.get("entities"):
+                body["entities"] = arguments["entities"]
 
-            loop = asyncio.get_event_loop()
-            file_path = await loop.run_in_executor(
-                None,
-                lambda: _save_memory(content, category_type, slug, entities, core, source),
-            )
-            rel = file_path.replace(config.palinode_dir + "/", "")
-            return [types.TextContent(type="text", text=f"Saved to {rel}")]
+            resp = await _post("/save", json=body)
+            if resp.status_code != 200:
+                return _text(f"Save failed: {resp.text}")
+            data = resp.json()
+            file_path = data.get("file_path", "")
+            # Show relative path
+            rel = file_path.rsplit("/palinode/", 1)[-1] if "/palinode/" in file_path else file_path
+            return _text(f"Saved to {rel}")
 
+        # ── ingest ────────────────────────────────────────────────────────
         elif name == "palinode_ingest":
             url = arguments["url"]
             name_arg = arguments.get("name", url.split("/")[-1][:40])
 
-            import httpx
-            api_port = config.services.api.port
-            resp = httpx.post(
-                f"http://localhost:{api_port}/ingest-url",
-                json={"url": url, "name": name_arg},
-                timeout=60.0,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("file_path"):
-                    rel = data["file_path"].replace(config.palinode_dir + "/", "")
-                    return [types.TextContent(type="text", text=f"Ingested → {rel}")]
-                return [types.TextContent(type="text", text="No content extracted from URL.")]
-            return [types.TextContent(type="text", text=f"Ingest failed: {resp.text}")]
+            resp = await _post("/ingest-url", json={"url": url, "name": name_arg}, timeout=60.0)
+            if resp.status_code != 200:
+                return _text(f"Ingest failed: {resp.text}")
+            data = resp.json()
+            if data.get("file_path"):
+                fp = data["file_path"]
+                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
+                return _text(f"Ingested → {rel}")
+            return _text("No content extracted from URL.")
 
+        # ── history ───────────────────────────────────────────────────────
         elif name == "palinode_history":
-            import subprocess
             file_path = arguments["file_path"]
-            
-            base_dir = os.path.abspath(config.palinode_dir)
-            full_path = os.path.abspath(os.path.join(base_dir, file_path))
-            
-            if not full_path.startswith(base_dir):
-                return [types.TextContent(type="text", text="Error: Invalid file path (path traversal detected)")]
+            resp = await _get(f"/history/{file_path}")
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            data = resp.json()
+            if not data.get("history"):
+                return _text("No history found.")
+            lines = [f"{c['hash']} | {c['date']} | {c['message']}" for c in data["history"]]
+            return _text("\n".join(lines))
 
-            if not os.path.exists(full_path):
-                return [types.TextContent(type="text", text=f"File not found: {file_path}")]
-
-            result = subprocess.run(
-                ["git", "log", "-10", "--format=%H|%aI|%s", "--", file_path],
-                capture_output=True, text=True,
-                cwd=config.palinode_dir,
-            )
-            return [types.TextContent(type="text", text=result.stdout.strip() or "No history found.")]
-            
+        # ── entities ──────────────────────────────────────────────────────
         elif name == "palinode_entities":
             import json
             entity_ref = arguments.get("entity_ref")
             if entity_ref:
-                files = store.get_entity_files(entity_ref)
-                graph = store.get_entity_graph(entity_ref)
-                return [types.TextContent(type="text", text=json.dumps({"files": files, "connected": graph}, indent=2))]
+                resp = await _get(f"/entities/{entity_ref}")
             else:
-                db = store.get_db()
-                try:
-                    rows = db.execute("SELECT entity_ref, count(*) as count FROM entities GROUP BY entity_ref ORDER BY count DESC").fetchall()
-                    res = [{"entity": r[0], "count": r[1]} for r in rows]
-                finally:
-                    db.close()
-                return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
-                
+                resp = await _get("/entities")
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            return _text(json.dumps(resp.json(), indent=2))
+
+        # ── consolidate ───────────────────────────────────────────────────
         elif name == "palinode_consolidate":
             import json
-            from palinode.consolidation.runner import run_consolidation
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, run_consolidation)
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            resp = await _post("/consolidate", timeout=300.0)
+            if resp.status_code != 200:
+                return _text(f"Consolidation failed: {resp.text}")
+            return _text(json.dumps(resp.json(), indent=2))
 
+        # ── status ────────────────────────────────────────────────────────
         elif name == "palinode_status":
-            stats = store.get_stats()
-            
-            db = store.get_db()
-            try:
-                fts_count = db.execute("SELECT count(*) FROM chunks_fts").fetchone()[0]
-            except Exception:
-                fts_count = 0
-            db.close()
-
-            try:
-                import httpx
-                httpx.get(config.embeddings.primary.url, timeout=2.0)
-                ollama_ok = True
-            except Exception:
-                ollama_ok = False
-
-            import subprocess
-            r = subprocess.run(
-                ["systemctl", "is-active", "palinode-watcher.service"],
-                capture_output=True, text=True
-            )
-            watcher_status = r.stdout.strip() if r.returncode == 0 else "unknown"
-
-            r2 = subprocess.run(
-                ["systemctl", "is-active", "palinode-api.service"],
-                capture_output=True, text=True
-            )
-            api_status = r2.stdout.strip() if r2.returncode == 0 else "unknown"
-
+            resp = await _get("/status")
+            if resp.status_code != 200:
+                return _text(f"API unreachable: {resp.text}")
+            s = resp.json()
             lines = [
-                f"Palinode Status",
-                f"  Files indexed:  {stats['total_files']}",
-                f"  Chunks indexed: {stats['total_chunks']}",
-                f"  Hybrid search:  {'✅ enabled' if config.search.hybrid_enabled else '❌ disabled (vector only)'}",
-                f"  FTS5 chunks:    {fts_count}",
-                f"  Ollama (embed): {'✅ reachable' if ollama_ok else '❌ unreachable'}",
-                f"  API service:    {api_status}",
-                f"  Watcher:        {watcher_status}",
-                f"  DB:             {config.db_path}",
-                f"  Memory dir:     {config.palinode_dir}",
+                "Palinode Status",
+                f"  Files indexed:  {s.get('total_files', '?')}",
+                f"  Chunks indexed: {s.get('total_chunks', '?')}",
+                f"  Hybrid search:  {'✅ enabled' if s.get('hybrid_search') else '❌ disabled'}",
+                f"  FTS5 chunks:    {s.get('fts_chunks', '?')}",
+                f"  Entities:       {s.get('total_entities', '?')}",
+                f"  Ollama (embed): {'✅ reachable' if s.get('ollama_reachable') else '❌ unreachable'}",
+                f"  Git commits 7d: {s.get('git_commits_7d', '?')}",
+                f"  Unpushed:       {s.get('unpushed_commits', '?')}",
+                f"  API:            {_api_url('')}",
             ]
-            return [types.TextContent(type="text", text="\n".join(lines))]
+            return _text("\n".join(lines))
 
+        # ── diff ──────────────────────────────────────────────────────────
         elif name == "palinode_diff":
-            from palinode.core import git_tools
             days = int(arguments.get("days", 7))
+            params = {"days": str(days)}
             paths = arguments.get("paths")
-            result = git_tools.diff(days, paths)
-            return [types.TextContent(type="text", text=result)]
+            if paths:
+                params["paths"] = ",".join(paths)
+            resp = await _get("/diff", params=params)
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            return _text(resp.json().get("diff", "No changes."))
 
+        # ── blame ─────────────────────────────────────────────────────────
         elif name == "palinode_blame":
-            from palinode.core import git_tools
-            result = git_tools.blame(arguments["file"], arguments.get("search"))
-            return [types.TextContent(type="text", text=result)]
+            file_path = arguments["file"]
+            params: dict[str, str] = {}
+            if arguments.get("search"):
+                params["search"] = arguments["search"]
+            resp = await _get(f"/blame/{file_path}", params=params)
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            return _text(resp.json().get("blame", "No blame data."))
 
+        # ── timeline ──────────────────────────────────────────────────────
         elif name == "palinode_timeline":
-            from palinode.core import git_tools
-            result = git_tools.timeline(arguments["file"], int(arguments.get("limit", 20)))
-            return [types.TextContent(type="text", text=result)]
+            file_path = arguments["file"]
+            limit = int(arguments.get("limit", 20))
+            resp = await _get(f"/timeline/{file_path}", params={"limit": str(limit)})
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            return _text(resp.json().get("timeline", "No timeline data."))
 
+        # ── rollback ──────────────────────────────────────────────────────
         elif name == "palinode_rollback":
-            from palinode.core import git_tools
-            result = git_tools.rollback(
-                arguments["file"],
-                arguments.get("commit"),
-                arguments.get("dry_run", True),
-            )
-            return [types.TextContent(type="text", text=result)]
+            params: dict[str, str] = {"file_path": arguments["file"]}
+            if arguments.get("commit"):
+                params["commit"] = arguments["commit"]
+            params["dry_run"] = str(arguments.get("dry_run", True)).lower()
+            resp = await _post_params("/rollback", params=params)
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            return _text(resp.json().get("result", "Done."))
 
+        # ── push ──────────────────────────────────────────────────────────
         elif name == "palinode_push":
-            from palinode.core import git_tools
-            result = git_tools.push()
-            return [types.TextContent(type="text", text=result)]
+            resp = await _post("/push")
+            if resp.status_code != 200:
+                return _text(f"Push failed: {resp.text}")
+            return _text(resp.json().get("result", "Pushed."))
 
+        # ── trigger ───────────────────────────────────────────────────────
         elif name == "palinode_trigger":
             action = arguments.get("action", "create")
             if action == "list":
                 import json
-                triggers = store.list_triggers()
-                return [types.TextContent(type="text", text=json.dumps(triggers, indent=2))]
+                resp = await _get("/triggers")
+                if resp.status_code != 200:
+                    return _text(f"Error: {resp.text}")
+                return _text(json.dumps(resp.json(), indent=2))
+
             elif action == "delete":
                 tid = arguments.get("trigger_id")
                 if not tid:
-                    return [types.TextContent(type="text", text="Error: trigger_id required for delete")]
-                store.delete_trigger(tid)
-                return [types.TextContent(type="text", text=f"Deleted trigger {tid}")]
-            else:
+                    return _text("Error: trigger_id required for delete")
+                resp = await _delete(f"/triggers/{tid}")
+                if resp.status_code != 200:
+                    return _text(f"Error: {resp.text}")
+                return _text(f"Deleted trigger {tid}")
+
+            else:  # create
                 desc = arguments.get("description")
                 mem = arguments.get("memory_file")
                 if not desc or not mem:
-                    return [types.TextContent(type="text", text="Error: description and memory_file required for create")]
-                
-                import uuid
-                tid = arguments.get("trigger_id") or str(uuid.uuid4())
-                loop = asyncio.get_event_loop()
-                emb = await loop.run_in_executor(None, embedder.embed, desc)
-                if not emb:
-                    return [types.TextContent(type="text", text="Error: embedding failed")]
-                
-                await loop.run_in_executor(
-                    None,
-                    lambda: store.add_trigger(tid, desc, mem, emb)
-                )
-                return [types.TextContent(type="text", text=f"Created trigger {tid} for {mem}")]
+                    return _text("Error: description and memory_file required for create")
+                body = {
+                    "description": desc,
+                    "memory_file": mem,
+                }
+                if arguments.get("trigger_id"):
+                    body["trigger_id"] = arguments["trigger_id"]
+                resp = await _post("/triggers", json=body)
+                if resp.status_code != 200:
+                    return _text(f"Error: {resp.text}")
+                data = resp.json()
+                return _text(f"Created trigger {data.get('id', '?')} for {mem}")
 
+        # ── session_end ───────────────────────────────────────────────────
         elif name == "palinode_session_end":
-            summary = arguments.get("summary", "")
-            decisions = arguments.get("decisions", [])
-            blockers = arguments.get("blockers", [])
-            project = arguments.get("project")
-            source = arguments.get("source", "mcp")
+            body: dict[str, Any] = {"summary": arguments.get("summary", "")}
+            if arguments.get("decisions"):
+                body["decisions"] = arguments["decisions"]
+            if arguments.get("blockers"):
+                body["blockers"] = arguments["blockers"]
+            if arguments.get("project"):
+                body["project"] = arguments["project"]
+            if arguments.get("source"):
+                body["source"] = arguments["source"]
 
-            today = _utc_now().strftime("%Y-%m-%d")
-            now_iso = _utc_now().isoformat().replace("+00:00", "Z")
+            resp = await _post("/session-end", json=body)
+            if resp.status_code != 200:
+                return _text(f"Session-end failed: {resp.text}")
+            data = resp.json()
+            status_msg = f" + status → {data['status_file']}" if data.get("status_file") else ""
+            return _text(f"Session captured → {data['daily_file']}{status_msg}\n\n{data.get('entry', '')}")
 
-            # Build session entry
-            parts = [f"## Session End — {now_iso}\n"]
-            parts.append(f"**Source:** {source}\n")
-            parts.append(f"**Summary:** {summary}\n")
-            if decisions:
-                parts.append("**Decisions:**")
-                for d in decisions:
-                    parts.append(f"- {d}")
-                parts.append("")
-            if blockers:
-                parts.append("**Blockers/Next:**")
-                for b in blockers:
-                    parts.append(f"- {b}")
-                parts.append("")
-
-            session_entry = "\n".join(parts)
-
-            # Write to daily notes
-            daily_dir = os.path.join(config.memory_dir, "daily")
-            os.makedirs(daily_dir, exist_ok=True)
-            daily_path = os.path.join(daily_dir, f"{today}.md")
-            with open(daily_path, "a") as f:
-                f.write(f"\n{session_entry}\n")
-
-            # Append status to project -status.md if project specified or detectable
-            status_msg = ""
-            if project:
-                status_path = os.path.join(config.memory_dir, "projects", f"{project}-status.md")
-                if os.path.exists(status_path):
-                    one_liner = summary.replace("\n", " ").strip()[:200]
-                    with open(status_path, "a") as f:
-                        f.write(f"\n- [{today}] {one_liner}\n")
-                    status_msg = f" + status → {project}-status.md"
-
-            return [types.TextContent(
-                type="text",
-                text=f"Session captured → daily/{today}.md{status_msg}\n\n{session_entry}",
-            )]
-
+        # ── lint ──────────────────────────────────────────────────────────
         elif name == "palinode_lint":
-            from palinode.core.lint import run_lint_pass
             import json
-            result = run_lint_pass()
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            resp = await _post("/lint", timeout=120.0)
+            if resp.status_code != 200:
+                return _text(f"Lint failed: {resp.text}")
+            return _text(json.dumps(resp.json(), indent=2))
 
         else:
-            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+            return _text(f"Unknown tool: {name}")
 
+    except httpx.ConnectError:
+        return _text(f"Error: Cannot reach Palinode API at {_api_url('')}. Is palinode-api running?")
+    except httpx.TimeoutException:
+        return _text(f"Error: Request to {_api_url('')} timed out.")
     except Exception as e:
         logger.exception(f"Tool {name} failed")
-        return [types.TextContent(type="text", text=f"Error: {e}")]
+        return _text(f"Error: {e}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 async def async_main() -> None:
-    """Async boot sequence capturing STDIN channels logic targets."""
+    """Async boot sequence — start MCP server over stdio."""
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -845,9 +736,53 @@ async def async_main() -> None:
             server.create_initialization_options(),
         )
 
+
 def main() -> None:
-    """Synchronous entry point for setuptools console_scripts."""
+    """Synchronous entry point for setuptools console_scripts (stdio transport)."""
     asyncio.run(async_main())
+
+
+def main_sse() -> None:
+    """Entry point for HTTP transport — palinode-mcp-sse.
+
+    Exposes the MCP server over Streamable HTTP so remote clients (Zed, Cursor, etc.)
+    can connect via URL without running a local process.
+
+    Env vars:
+      PALINODE_MCP_SSE_HOST  — bind address (default: 0.0.0.0)
+      PALINODE_MCP_SSE_PORT  — bind port (default: 6341)
+
+    Client config (any IDE):
+      { "url": "http://your-server:6341/mcp" }
+    """
+    import contextlib
+    import os
+    from collections.abc import AsyncIterator
+
+    import uvicorn
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    session_manager = StreamableHTTPSessionManager(app=server)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            yield
+
+    starlette_app = Starlette(
+        lifespan=lifespan,
+        routes=[
+            Mount("/mcp", app=session_manager.handle_request),
+        ],
+    )
+
+    host = os.environ.get("PALINODE_MCP_SSE_HOST", "0.0.0.0")
+    port = int(os.environ.get("PALINODE_MCP_SSE_PORT", "6341"))
+    print(f"Palinode MCP (Streamable HTTP) listening on http://{host}:{port}/mcp")
+    print(f"  API backend: {_api_url('')}")
+    uvicorn.run(starlette_app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,19 @@ Palinode gives Claude Code persistent memory via MCP — 17 tools for searching,
 
 ---
 
+## Quick Decision: Which Option?
+
+| Setup | Best For | Transport | Latency |
+|-------|----------|-----------|---------|
+| **A. Local** | Palinode + IDE on same machine | stdio | ~5ms |
+| **B. Remote SSH** | Homelab server, stdio-only clients | stdio over SSH | ~20ms |
+| **C. Remote HTTP** | Homelab server, any IDE (Zed, Cursor, etc.) | Streamable HTTP | ~15ms |
+| **D. LaunchAgent** | macOS auto-start for local install | — (service mgmt) | — |
+
+**Recommended for remote setups:** Option C (HTTP). No SSH pipes, works with every MCP client, and survives SSH disconnects.
+
+---
+
 ## Option A: Local Install (Same Machine)
 
 Best if you run Claude Code on the same machine as Palinode.
@@ -31,14 +44,18 @@ cp ~/palinode/palinode.config.yaml.example ~/.palinode/palinode.config.yaml
 # Edit ~/.palinode/palinode.config.yaml — set memory_dir: ~/.palinode
 ```
 
-### 3. Start Palinode API
+### 3. Start Palinode Services
 
 ```bash
-PALINODE_DIR=~/.palinode python -m palinode.api.server
+# Terminal 1: API server
+PALINODE_DIR=~/.palinode palinode-api
 # Runs on localhost:6340
+
+# Terminal 2: File watcher (auto-indexes on save)
+PALINODE_DIR=~/.palinode palinode-watcher
 ```
 
-Keep it running (add to login items, launchd, or systemd as needed).
+Keep them running (add to login items, launchd, or systemd as needed).
 
 ### 4. Add MCP Server to Claude Code
 
@@ -63,9 +80,9 @@ Restart Claude Code. Run `/mcp` to verify `palinode` is connected.
 
 ---
 
-## Option B: Remote Server via SSH
+## Option B: Remote Server via SSH (stdio)
 
-Best if Palinode runs on a homelab server and Claude Code runs on your laptop.
+Best if Palinode runs on a homelab server and your IDE only supports stdio MCP (Claude Code, Claude Desktop).
 
 ```json
 {
@@ -85,12 +102,121 @@ Best if Palinode runs on a homelab server and Claude Code runs on your laptop.
 
 **Prerequisites:**
 - SSH key auth set up: `ssh-copy-id youruser@your-server`
-- Palinode installed on the server (Option A steps 1-2)
-- Palinode watcher running on the server (for auto-indexing on file changes)
+- Palinode installed on the server (Option A steps 1-3)
+- Palinode API + watcher running on the server
+
+> **Note:** The MCP server is a pure HTTP client — it makes requests to `palinode-api` on localhost. No direct database or filesystem access. This means the API server must be running on the remote host.
 
 ---
 
-## Option C: macOS LaunchAgent (Auto-Start)
+## Option C: Remote HTTP (Streamable HTTP) ⭐ Recommended for Remote
+
+Best for remote setups. Works with **any** MCP client — no SSH pipes, no local Python install needed. The MCP server runs as a persistent HTTP service on your server.
+
+### Server Setup
+
+On your server, start the Streamable HTTP MCP server:
+
+```bash
+PALINODE_DIR=~/.palinode palinode-mcp-sse
+# Listens on 0.0.0.0:6341
+```
+
+Or use systemd (recommended):
+
+```ini
+# ~/.config/systemd/user/palinode-mcp.service
+[Unit]
+Description=Palinode MCP Server (Streamable HTTP)
+After=network.target palinode-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/palinode
+Environment="PALINODE_DIR=/path/to/memory-data"
+Environment="PALINODE_API_HOST=127.0.0.1"
+Environment="PALINODE_API_PORT=6340"
+ExecStart=/path/to/palinode/venv/bin/palinode-mcp-sse
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now palinode-mcp.service
+```
+
+### Client Configuration
+
+The MCP endpoint is `http://your-server:6341/mcp`. Configure your IDE:
+
+**Claude Code** (`~/.claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/"
+    }
+  }
+}
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/"
+    }
+  }
+}
+```
+
+**Zed** (Settings → Extensions → MCP → Add Server):
+```json
+{
+  "palinode": {
+    "url": "http://your-server:6341/mcp/",
+    "headers": {}
+  }
+}
+```
+
+**Cursor** (Settings → MCP → Add Server):
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/"
+    }
+  }
+}
+```
+
+**Antigravity** — add via the MCP configuration UI with URL `http://your-server:6341/mcp`.
+
+### Network Access
+
+The MCP server needs to be reachable from your IDE. Options:
+- **Tailscale** (recommended): Install on both machines, use the Tailscale IP (e.g., `http://100.x.x.x:6341/mcp`)
+- **LAN**: Use the server's local IP if on the same network
+- **SSH tunnel**: `ssh -L 6341:localhost:6341 youruser@your-server` then use `http://localhost:6341/mcp`
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PALINODE_MCP_SSE_HOST` | `0.0.0.0` | Bind address for MCP HTTP server |
+| `PALINODE_MCP_SSE_PORT` | `6341` | Port for MCP HTTP server |
+| `PALINODE_API_HOST` | `127.0.0.1` | Where MCP server sends API requests |
+| `PALINODE_API_PORT` | `6340` | API server port |
+
+---
+
+## Option D: macOS LaunchAgent (Auto-Start)
 
 Keep Palinode API running in the background on macOS:
 
@@ -143,23 +269,26 @@ Search palinode for "recent project decisions"
 
 ---
 
-## Available Tools (13)
+## Available Tools (17)
 
 | Tool | Description |
 |---|---|
 | `palinode_search` | Hybrid BM25+vector search over all memories |
 | `palinode_save` | Store a typed memory (person, decision, insight, project) |
+| `palinode_list` | List memory files with optional type/category filter |
+| `palinode_read` | Read the full content of a specific memory file |
 | `palinode_ingest` | Fetch a URL and save as research reference |
 | `palinode_status` | File counts, index health, entity graph size |
-| `palinode_history` | Recent daily notes / capture history |
+| `palinode_history` | Git history for a specific memory file |
 | `palinode_entities` | List known entities and their relationships |
 | `palinode_consolidate` | Run or preview the weekly compaction job |
-| `palinode_diff` | See what changed in a memory file (git diff) |
-| `palinode_blame` | Who/when each section was written |
-| `palinode_timeline` | Activity over time |
+| `palinode_diff` | See what changed in memory recently (git diff) |
+| `palinode_blame` | Who/when each line was written (git blame) |
+| `palinode_timeline` | Chronological changes to a memory file |
 | `palinode_rollback` | Revert a file to a previous state |
 | `palinode_push` | Push memory changes to remote git |
-| `palinode_trigger` | Register a prospective recall intention |
+| `palinode_trigger` | Register a prospective recall trigger |
+| `palinode_lint` | Run health checks on memory files |
 | `palinode_session_end` | Capture session summary, decisions, blockers at end |
 
 ---

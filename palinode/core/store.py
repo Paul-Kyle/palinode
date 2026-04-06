@@ -501,6 +501,37 @@ def search_fts(query: str, category: str | None = None, top_k: int = 10) -> list
     db.close()
     return results
 
+def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Annotate search results with freshness status.
+
+    Reads the source file for each result, computes current hash,
+    compares against stored content_hash in chunk metadata.
+
+    Returns results with added 'freshness' key: 'valid' | 'stale' | 'unknown'
+    """
+    for result in results:
+        file_path = result.get("file_path", "")
+        stored_hash = result.get("metadata", {}).get("content_hash")
+
+        if not stored_hash:
+            result["freshness"] = "unknown"
+            continue
+
+        full_path = os.path.join(config.palinode_dir, file_path) if not os.path.isabs(file_path) else file_path
+        if not os.path.exists(full_path):
+            result["freshness"] = "stale"
+            continue
+
+        try:
+            with open(full_path, "r") as f:
+                # Based on the spec, we hash the entire file content here.
+                current_hash = hashlib.sha256(f.read().encode()).hexdigest()[:16]
+            result["freshness"] = "valid" if current_hash == stored_hash else "stale"
+        except Exception:
+            result["freshness"] = "unknown"
+
+    return results
+
 def search_hybrid(
     query_text: str,
     query_embedding: list[float],
@@ -615,6 +646,9 @@ def search_hybrid(
                 continue
             filtered.append(r)
         merged = filtered
+
+    if merged:
+        merged = check_freshness(merged)
 
     # Record retrieval for frequency tracking (batch update, non-blocking)
     if merged:

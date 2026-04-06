@@ -103,7 +103,7 @@ def _collect_daily_notes(lookback_days: int) -> list[dict]:
                 "project/mm-kmd": ["MM-KMD", "MM_KMD", "Kill My Darlings", "murder mystery", "OLMo", "LoRA", "vLLM", "LangGraph", "character agent", "Director", "mastermind"],
                 "project/palinode": ["Palinode", "palinode", "memory system", "SQLite-vec", "BGE-M3", "palinode_search"],
                 "project/color-class": ["FPFV", "color grading", "DaVinci Resolve", "Color Class", "RAW grading", "Yumi"],
-                "project/infrastructure": ["server", "GPU", "Ollama", "homelab"],
+                "project/infrastructure": ["your-server", "5090", "5060", "Ollama", "Tailscale", "homelab", "Mac Studio"],
             }
             content_lower = content.lower()
             for project_ref, keywords in keyword_map.items():
@@ -131,7 +131,61 @@ def _group_by_project(daily_notes: list[dict]) -> dict[str, list[dict]]:
                 groups[pid].append(note)
     return groups
 
-def _consolidate_project(project_id: str, notes: list[dict]) -> list[dict]:
+def _build_model_chain() -> list[dict[str, str]]:
+    """Build ordered chain from config: primary + fallbacks.
+
+    Returns list of {"model": ..., "url": ...} dicts.
+    Primary is always first.
+    """
+    chain = [{"model": config.consolidation.llm_model, "url": config.consolidation.llm_url}]
+    for fb in getattr(config.consolidation, "llm_fallbacks", []):
+        chain.append({"model": fb["model"], "url": fb["url"]})
+    return chain
+
+
+def _call_llm_with_fallback(system_prompt: str, user_prompt: str) -> tuple[str, str]:
+    """Call the consolidation LLM with fallback chain.
+
+    Tries primary model first. On timeout or HTTP error, tries each
+    fallback in order. Returns (response_text, model_used).
+
+    Raises:
+        RuntimeError: All models in chain failed.
+    """
+    chain = _build_model_chain()
+
+    last_error = None
+    for i, endpoint in enumerate(chain):
+        try:
+            response = httpx.post(
+                f"{endpoint['url']}/v1/chat/completions",
+                json={
+                    "model": endpoint["model"],
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": config.consolidation.llm_temperature,
+                    "max_tokens": config.consolidation.llm_max_tokens,
+                },
+                timeout=600.0,
+            )
+            response.raise_for_status()
+            result = response.json()["choices"][0]["message"]["content"]
+
+            if i > 0:
+                logger.info(f"Fallback model succeeded: {endpoint['model']} @ {endpoint['url']} (primary failed)")
+
+            return result, endpoint["model"]
+
+        except (httpx.TimeoutException, httpx.HTTPStatusError, Exception) as e:
+            last_error = e
+            logger.warning(f"Model {endpoint['model']} @ {endpoint['url']} failed: {e}")
+            continue
+
+    raise RuntimeError(f"All {len(chain)} models failed. Last error: {last_error}")
+
+def _consolidate_project(project_id: str, notes: list[dict]) -> tuple[list[dict], str]:
     """Consolidate a project by generating compaction operations.
     
     Reads the compaction prompt, extracts facts from the project file,
@@ -142,7 +196,7 @@ def _consolidate_project(project_id: str, notes: list[dict]) -> list[dict]:
         notes: Recent daily notes mentioning this project.
         
     Returns:
-        List of operation dicts.
+        Tuple of (List of operation dicts, model_used).
     """
     # Load compaction prompt
     prompt_path = os.path.join(config.memory_dir, "specs", "prompts", "compaction.md")
@@ -166,7 +220,7 @@ def _consolidate_project(project_id: str, notes: list[dict]) -> list[dict]:
     
     if not facts:
         logger.info(f"No tagged facts in {target_file}, skipping compaction")
-        return []
+        return [], "primary"
     
     # Format for LLM
     facts_text = "\n".join(f"[{f['id']}] {f['text']}" for f in facts)
@@ -194,21 +248,11 @@ def _consolidate_project(project_id: str, notes: list[dict]) -> list[dict]:
 Return the operations JSON array."""
 
     # Call LLM
-    response = httpx.post(
-        f"{config.consolidation.llm_url}/v1/chat/completions",
-        json={
-            "model": config.consolidation.llm_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": config.consolidation.llm_temperature,
-            "max_tokens": config.consolidation.llm_max_tokens,
-        },
-        timeout=600.0,
-    )
-    response.raise_for_status()
-    result_text = response.json()["choices"][0]["message"]["content"]
+    try:
+        result_text, model_used = _call_llm_with_fallback(system_prompt, user_prompt)
+    except Exception as e:
+        logger.error(f"Failed to call LLM for {project_id}: {e}")
+        return [], "failed"
     
     # Parse JSON
     json_match = re.search(r'\[[\s\S]*\]', result_text)
@@ -224,15 +268,15 @@ Return the operations JSON array."""
                     # Filter out any non-dict entries (LLM sometimes nests lists)
                     valid_ops = [op for op in repaired if isinstance(op, dict) and "op" in op]
                     logger.info(f"Repaired malformed LLM JSON ({len(valid_ops)} valid ops from {len(repaired)} entries)")
-                    return valid_ops
+                    return valid_ops, model_used
             except Exception as repair_err:
                 logger.error(f"json_repair also failed: {repair_err}")
             logger.error(f"Could not parse LLM JSON for compaction")
             logger.debug(f"Raw LLM output: {json_match.group()[:500]}")
-            return []
+            return [], model_used
     
     logger.warning(f"Could not parse operations from LLM response for {project_id}")
-    return []
+    return [], model_used
 
 def _check_contradictions(new_items: list[dict], project_id: str) -> list[dict]:
     """Check new items for contradictions against existing knowledge base."""
@@ -265,21 +309,7 @@ def _check_contradictions(new_items: list[dict], project_id: str) -> list[dict]:
 Return the operation as JSON."""
 
         try:
-            response = httpx.post(
-                f"{config.consolidation.llm_url}/v1/chat/completions",
-                json={
-                    "model": config.consolidation.llm_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 500,
-                },
-                timeout=60.0,
-            )
-            response.raise_for_status()
-            result_text = response.json()["choices"][0]["message"]["content"]
+            result_text, model_used = _call_llm_with_fallback(system_prompt, user_prompt)
 
             json_match = re.search(r"```json\s*([\s\S]*?)```", result_text)
             if json_match:
@@ -464,9 +494,12 @@ def run_consolidation(lookback_days: int | None = None) -> dict[str, Any]:
     
     for project_id, pnotes in grouped.items():
         try:
-            operations = _consolidate_project(project_id, pnotes)
+            model_used_current = "primary"
+            operations, model_used_current = _consolidate_project(project_id, pnotes)
             if not operations:
                 continue
+            
+            model_used = model_used_current
             
             # Determine target file
             status_file = os.path.join(config.memory_dir, "projects", f"{project_id}-status.md")
@@ -495,7 +528,8 @@ def run_consolidation(lookback_days: int | None = None) -> dict[str, Any]:
     
     _git_commit(f"palinode: compaction {_utc_now().strftime('%Y-%m-%d')} — "
                 f"{total_stats['updated']}u {total_stats['merged']}m "
-                f"{total_stats['superseded']}s {total_stats['archived']}a")
+                f"{total_stats['superseded']}s {total_stats['archived']}a"
+                f" (model: {model_used})")
     
     return {
         "status": "success",

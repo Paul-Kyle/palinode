@@ -14,6 +14,7 @@ import time
 import re
 import yaml
 import httpx
+import hashlib
 import subprocess
 import glob
 from datetime import UTC, datetime
@@ -414,11 +415,14 @@ def save_api(req: SaveRequest) -> dict[str, str]:
     file_path = os.path.join(config.palinode_dir, category, f"{slug}.md")
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     
+    content_hash = hashlib.sha256(req.content.encode()).hexdigest()[:16]
+    
     frontmatter_dict = {
         "id": f"{category}-{slug}",
         "category": category,
         "type": req.type,
         "entities": req.entities or [],
+        "content_hash": content_hash,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
     }
     if req.metadata:
@@ -710,9 +714,10 @@ def bootstrap_fact_ids_api() -> dict[str, Any]:
 
 
 @app.get("/diff")
-def diff_api(days: int = 7) -> dict[str, Any]:
-    """Show memory changes in the last N days."""
-    return {"diff": git_tools.diff(days)}
+def diff_api(days: int = 7, paths: str | None = None) -> dict[str, Any]:
+    """Show memory changes in the last N days, optionally filtered by paths."""
+    path_list = paths.split(",") if paths else None
+    return {"diff": git_tools.diff(days, path_list)}
 
 
 @app.get("/blame/{file_path:path}")
@@ -740,6 +745,77 @@ def rollback_api(file_path: str, commit: str | None = None, dry_run: bool = True
 def push_api() -> dict[str, Any]:
     """Push memory changes to the remote repository."""
     return {"result": git_tools.push()}
+
+
+class SessionEndRequest(BaseModel):
+    summary: str
+    decisions: list[str] | None = None
+    blockers: list[str] | None = None
+    project: str | None = None
+    source: str | None = None
+
+
+@app.post("/session-end")
+def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
+    """Capture session outcomes to daily notes and project status files."""
+    today = _utc_now().strftime("%Y-%m-%d")
+    now_iso = _utc_now().isoformat().replace("+00:00", "Z")
+    source = req.source or os.environ.get("PALINODE_SOURCE", "api")
+
+    # Build session entry
+    parts = [f"## Session End — {now_iso}\n"]
+    parts.append(f"**Source:** {source}\n")
+    parts.append(f"**Summary:** {req.summary}\n")
+    if req.decisions:
+        parts.append("**Decisions:**")
+        for d in req.decisions:
+            parts.append(f"- {d}")
+        parts.append("")
+    if req.blockers:
+        parts.append("**Blockers/Next:**")
+        for b in req.blockers:
+            parts.append(f"- {b}")
+        parts.append("")
+
+    session_entry = "\n".join(parts)
+
+    # Write to daily notes
+    daily_dir = os.path.join(_memory_base_dir(), "daily")
+    os.makedirs(daily_dir, exist_ok=True)
+    daily_path = os.path.join(daily_dir, f"{today}.md")
+    with open(daily_path, "a") as f:
+        f.write(f"\n{session_entry}\n")
+
+    # Append status to project file if specified
+    status_file = None
+    if req.project:
+        status_path = os.path.join(_memory_base_dir(), "projects", f"{req.project}-status.md")
+        if os.path.exists(status_path):
+            one_liner = req.summary.replace("\n", " ").strip()[:200]
+            with open(status_path, "a") as f:
+                f.write(f"\n- [{today}] {one_liner}\n")
+            status_file = f"projects/{req.project}-status.md"
+
+    # Git commit
+    if config.git.auto_commit:
+        try:
+            files_to_add = [daily_path]
+            if status_file:
+                files_to_add.append(os.path.join(_memory_base_dir(), status_file))
+            for fp in files_to_add:
+                subprocess.run(["git", "add", fp], cwd=_memory_base_dir(), check=False)
+            commit_msg = f"{config.git.commit_prefix} session-end: {today}"
+            subprocess.run(["git", "commit", "-m", commit_msg], cwd=_memory_base_dir(), check=False)
+            if config.git.auto_push:
+                subprocess.run(["git", "push"], cwd=_memory_base_dir(), check=False)
+        except Exception as e:
+            logger.error(f"Git commit failed for session-end: {e}")
+
+    return {
+        "daily_file": f"daily/{today}.md",
+        "status_file": status_file,
+        "entry": session_entry,
+    }
 
 
 @app.get("/git-stats")
