@@ -181,7 +181,10 @@ class PalinodeHandler(FileSystemEventHandler):
                 except Exception:
                     pass
             cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", to_delete)
-            cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", to_delete)
+            try:
+                cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", to_delete)
+            except Exception:
+                pass  # vec0 row may already be gone — safe to ignore
             db.commit()
         db.close()
             
@@ -205,7 +208,10 @@ class PalinodeHandler(FileSystemEventHandler):
             event: Generic OS system notification block.
         """
         if not event.is_directory and self.is_valid_file(event.src_path):
-            self._process_file(event.src_path)
+            try:
+                self._process_file(event.src_path)
+            except Exception as e:
+                logger.error(f"Failed to index {event.src_path}: {e}")
 
     def on_created(self, event: FileCreatedEvent | DirCreatedEvent) -> None:
         """Hook triggered explicitly upon physical file creations natively.
@@ -214,7 +220,10 @@ class PalinodeHandler(FileSystemEventHandler):
             event: Generic OS system notification block.
         """
         if not event.is_directory and self.is_valid_file(event.src_path):
-            self._process_file(event.src_path)
+            try:
+                self._process_file(event.src_path)
+            except Exception as e:
+                logger.error(f"Failed to index {event.src_path}: {e}")
 
     def on_deleted(self, event: FileDeletedEvent | DirDeletedEvent) -> None:
         """Safely remove system traces preventing ghost responses inside API chunks.
@@ -223,8 +232,11 @@ class PalinodeHandler(FileSystemEventHandler):
             event: Generic OS FileEvent.
         """
         if not event.is_directory and self.is_valid_file(event.src_path):
-            logger.info(f"Deleting chunks for: {event.src_path}")
-            store.delete_file_chunks(event.src_path)
+            try:
+                logger.info(f"Deleting chunks for: {event.src_path}")
+                store.delete_file_chunks(event.src_path)
+            except Exception as e:
+                logger.error(f"Failed to delete chunks for {event.src_path}: {e}")
 
 
 def main() -> None:

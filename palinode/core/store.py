@@ -238,8 +238,12 @@ def upsert_chunks(chunks_data: list[dict[str, Any]], skip_unchanged: bool = True
         ))
         
         emb_json = json.dumps(chunk["embedding"])
+        try:
+            cursor.execute("DELETE FROM chunks_vec WHERE id = ?", (chunk["id"],))
+        except Exception:
+            pass  # May not exist yet — safe to ignore
         cursor.execute("""
-            INSERT OR REPLACE INTO chunks_vec (id, embedding)
+            INSERT INTO chunks_vec (id, embedding)
             VALUES (?, ?)
         """, (chunk["id"], emb_json))
 

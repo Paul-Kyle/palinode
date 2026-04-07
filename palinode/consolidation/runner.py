@@ -67,6 +67,9 @@ def _get_decisions_for_project(project_id: str) -> list[dict]:
                     continue
     return active_decisions
 
+_CONSOLIDATION_SKIP_DIRS = {"daily", "archive", "inbox", "logs", "prompts", "specs"}
+
+
 def _collect_daily_notes(lookback_days: int) -> list[dict]:
     """Collect recent daily notes from the daily directory."""
     daily_dir = os.path.join(config.memory_dir, "daily")
@@ -185,7 +188,7 @@ def _call_llm_with_fallback(system_prompt: str, user_prompt: str) -> tuple[str, 
 
     raise RuntimeError(f"All {len(chain)} models failed. Last error: {last_error}")
 
-def _consolidate_project(project_id: str, notes: list[dict]) -> tuple[list[dict], str]:
+def _consolidate_project(project_id: str, notes: list[dict], is_nightly: bool = False) -> tuple[list[dict], str]:
     """Consolidate a project by generating compaction operations.
     
     Reads the compaction prompt, extracts facts from the project file,
@@ -194,12 +197,17 @@ def _consolidate_project(project_id: str, notes: list[dict]) -> tuple[list[dict]
     Args:
         project_id: Project slug.
         notes: Recent daily notes mentioning this project.
+        is_nightly: Use the lightweight nightly prompt.
         
     Returns:
         Tuple of (List of operation dicts, model_used).
     """
     # Load compaction prompt
-    prompt_path = os.path.join(config.memory_dir, "specs", "prompts", "compaction.md")
+    prompt_file = "nightly-consolidation.md" if is_nightly else "compaction.md"
+    prompt_path = os.path.join(config.memory_dir, "specs", "prompts", prompt_file)
+    if not os.path.exists(prompt_path):
+        prompt_path = os.path.join(config.memory_dir, "specs", "prompts", "compaction.md")
+        
     with open(prompt_path) as f:
         system_prompt = f.read()
     
@@ -526,10 +534,76 @@ def run_consolidation(lookback_days: int | None = None) -> dict[str, Any]:
     else:
         logger.warning("No projects compacted successfully — skipping daily note archival")
     
+    
     _git_commit(f"palinode: compaction {_utc_now().strftime('%Y-%m-%d')} — "
                 f"{total_stats['updated']}u {total_stats['merged']}m "
                 f"{total_stats['superseded']}s {total_stats['archived']}a"
                 f" (model: {model_used})")
+    
+    return {
+        "status": "success",
+        "processed_notes": len(notes),
+        "projects_compacted": projects_processed,
+        **total_stats,
+    }
+
+
+def run_nightly(lookback_days: int | None = None) -> dict[str, Any]:
+    """Lightweight nightly consolidation — process today's daily notes only.
+
+    Restricted to UPDATE and SUPERSEDE ops. No ARCHIVE or MERGE (those
+    are weekly concerns). Smaller LLM context = better JSON output.
+    """
+    from palinode.consolidation.executor import apply_operations
+    
+    lookback = lookback_days or config.consolidation.nightly.lookback_days
+    notes = _collect_daily_notes(lookback)
+    if not notes:
+        return {"status": "no_new_notes", "processed_notes": 0, "projects_compacted": 0}
+    
+    grouped = _group_by_project(notes)
+    
+    total_stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0}
+    projects_processed = 0
+    model_used = "primary"
+    
+    for project_id, pnotes in grouped.items():
+        try:
+            operations, model_used_current = _consolidate_project(project_id, pnotes, is_nightly=True)
+            if not operations:
+                continue
+                
+            model_used = model_used_current
+            
+            # Enforce allows ops restriction
+            allowed_ops = set(config.consolidation.nightly.allowed_ops)
+            operations = [op for op in operations if op.get("op", op.get("operation", "")).upper() in allowed_ops]
+            if not operations:
+                continue
+            
+            # Determine target file
+            status_file = os.path.join(config.memory_dir, "projects", f"{project_id}-status.md")
+            project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
+            target = status_file if os.path.exists(status_file) else project_file
+            
+            stats = apply_operations(target, operations)
+            for k, v in stats.items():
+                total_stats[k] = total_stats.get(k, 0) + v
+
+            _update_status_summary(target, operations)
+
+            projects_processed += 1
+            logger.info(f"Nightly compacted {project_id}: {stats}")
+            
+        except Exception as e:
+            logger.error(f"Nightly compaction failed for {project_id}: {e}")
+            
+    # Nightly does NOT archive daily notes (left for weekly)
+    
+    if projects_processed > 0:
+        _git_commit(f"palinode: nightly {_utc_now().strftime('%Y-%m-%d')} — "
+                    f"{total_stats['updated']}u {total_stats['superseded']}s"
+                    f" (model: {model_used})")
     
     return {
         "status": "success",

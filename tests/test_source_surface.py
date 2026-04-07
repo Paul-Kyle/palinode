@@ -36,7 +36,8 @@ def test_save_includes_source_in_frontmatter(mock_memory_dir):
             content = f.read()
         assert "source: antigravity" in content
 
-def test_save_defaults_source_to_mcp(mock_memory_dir):
+def test_save_defaults_source_to_api(mock_memory_dir):
+    """API saves without explicit source should default to 'api'."""
     with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
         res = client.post("/save", json={
             "content": "Test memory",
@@ -44,16 +45,25 @@ def test_save_defaults_source_to_mcp(mock_memory_dir):
         })
         assert res.status_code == 200
         file_path = res.json()["file_path"]
-        
+
         with open(file_path, "r") as f:
             content = f.read()
         assert "source: api" in content
-        
-    from palinode.mcp import _save_memory
-    file_path = _save_memory("Test MCP", "Insight", None, [])
-    with open(file_path, "r") as f:
-        content = f.read()
-    assert "source: mcp" in content
+
+def test_save_with_mcp_source(mock_memory_dir):
+    """MCP saves pass source='mcp' through the API."""
+    with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
+        res = client.post("/save", json={
+            "content": "Test MCP memory",
+            "type": "Insight",
+            "source": "mcp"
+        })
+        assert res.status_code == 200
+        file_path = res.json()["file_path"]
+
+        with open(file_path, "r") as f:
+            content = f.read()
+        assert "source: mcp" in content
 
 def test_save_defaults_source_to_cli(mock_memory_dir):
     runner = CliRunner()

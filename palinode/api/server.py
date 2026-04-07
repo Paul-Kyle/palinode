@@ -195,7 +195,7 @@ def list_api(category: str | None = None, core_only: bool = False) -> list[dict[
     base_dir = _memory_base_dir()
     search_pattern = os.path.join(base_dir, "**/*.md")
     
-    skip_dirs = {"daily", "archive", "inbox", "logs"}
+    skip_dirs = {"daily", "archive", "inbox", "logs", "prompts"}
     
     for filepath in glob.glob(search_pattern, recursive=True):
         try:
@@ -681,16 +681,25 @@ def history_api(file_path: str, limit: int = 10) -> dict[str, Any]:
     return {"file": file_path, "history": commits}
 
 
+class ConsolidateRequest(BaseModel):
+    dry_run: bool = False
+    nightly: bool = False
+
 @app.post("/consolidate")
-def consolidate_api() -> dict[str, Any]:
+def consolidate_api(req: ConsolidateRequest = None) -> dict[str, Any]:
     """Run a manual consolidation pass.
 
     Normally runs as a weekly cron, but can be triggered manually
     for testing or after a busy week.
     """
-    from palinode.consolidation.runner import run_consolidation
+    from palinode.consolidation.runner import run_consolidation, run_nightly
+    
+    req = req or ConsolidateRequest()
     try:
-        result = run_consolidation()
+        if req.nightly:
+            result = run_nightly()
+        else:
+            result = run_consolidation()
         return result
     except Exception as e:
         logger.error(f"Consolidation failed: {e}")
@@ -822,6 +831,209 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
 def git_stats_api(days: int = 7) -> dict[str, Any]:
     """Get commit statistics for the memory repo."""
     return git_tools.commit_count(days)
+
+
+PROMPT_TASKS = {"compaction", "extraction", "update", "classification"}
+
+
+def _prompts_dir() -> str:
+    return os.path.join(_memory_base_dir(), "prompts")
+
+
+def _read_prompt_file(file_path: str) -> dict[str, Any]:
+    """Read a prompt file and return its metadata + content."""
+    from palinode.core import parser
+    with open(file_path, "r") as f:
+        raw = f.read()
+    metadata, sections = parser.parse_markdown(raw)
+    # Reconstruct body from sections
+    body = "\n\n".join(s["content"] for s in sections if s.get("content"))
+    name = os.path.basename(file_path).replace(".md", "")
+    return {
+        "name": name,
+        "file": os.path.relpath(file_path, _memory_base_dir()),
+        "model": metadata.get("model", ""),
+        "task": metadata.get("task", ""),
+        "version": metadata.get("version", ""),
+        "active": bool(metadata.get("active", False)),
+        "content": body.strip(),
+        "size_bytes": os.path.getsize(file_path),
+    }
+
+
+@app.get("/prompts")
+def list_prompts_api(task: str | None = None) -> list[dict[str, Any]]:
+    """List all prompt files, optionally filtered by task."""
+    prompts_dir = _prompts_dir()
+    if not os.path.exists(prompts_dir):
+        return []
+
+    results = []
+    for filepath in glob.glob(os.path.join(prompts_dir, "*.md")):
+        try:
+            if os.path.commonpath([_memory_base_dir(), os.path.realpath(filepath)]) != _memory_base_dir():
+                continue
+            info = _read_prompt_file(filepath)
+            if task and info["task"] != task:
+                continue
+            results.append(info)
+        except Exception:
+            pass
+
+    results.sort(key=lambda x: (x["task"], x["name"]))
+    return results
+
+
+@app.get("/prompts/{name}")
+def get_prompt_api(name: str) -> dict[str, Any]:
+    """Read a specific prompt by name."""
+    prompts_dir = _prompts_dir()
+    candidates = [
+        os.path.join(prompts_dir, name),
+        os.path.join(prompts_dir, f"{name}.md"),
+    ]
+    for candidate in candidates:
+        resolved = os.path.realpath(candidate)
+        try:
+            within = os.path.commonpath([_memory_base_dir(), resolved]) == _memory_base_dir()
+        except ValueError:
+            continue
+        if within and os.path.exists(resolved):
+            return _read_prompt_file(resolved)
+
+    raise HTTPException(status_code=404, detail=f"Prompt '{name}' not found")
+
+
+@app.post("/prompts/{name}/activate")
+def activate_prompt_api(name: str) -> dict[str, Any]:
+    """Set active=true on this prompt and active=false on all others with the same task."""
+    import re as _re
+    prompts_dir = _prompts_dir()
+    if not os.path.exists(prompts_dir):
+        raise HTTPException(status_code=404, detail="No prompts directory found")
+
+    # Resolve target file
+    candidates = [
+        os.path.join(prompts_dir, name),
+        os.path.join(prompts_dir, f"{name}.md"),
+    ]
+    target_path = None
+    for candidate in candidates:
+        resolved = os.path.realpath(candidate)
+        try:
+            within = os.path.commonpath([_memory_base_dir(), resolved]) == _memory_base_dir()
+        except ValueError:
+            continue
+        if within and os.path.exists(resolved):
+            target_path = resolved
+            break
+
+    if not target_path:
+        raise HTTPException(status_code=404, detail=f"Prompt '{name}' not found")
+
+    target_info = _read_prompt_file(target_path)
+    task = target_info["task"]
+
+    def _set_active(file_path: str, active: bool) -> None:
+        with open(file_path, "r") as f:
+            text = f.read()
+        # Replace active: field in frontmatter
+        new_text = _re.sub(
+            r'^(active:\s*).*$',
+            f'active: {"true" if active else "false"}',
+            text,
+            flags=_re.MULTILINE,
+        )
+        if new_text == text:
+            # Field missing — inject before closing ---
+            pattern = _re.compile(r'^(---\n.*?\n)(---\n)', _re.DOTALL)
+            m = pattern.match(text)
+            if m:
+                new_text = m.group(1) + f'active: {"true" if active else "false"}\n' + m.group(2) + text[m.end():]
+        with open(file_path, "w") as f:
+            f.write(new_text)
+
+    # Deactivate all prompts of the same task
+    for filepath in glob.glob(os.path.join(prompts_dir, "*.md")):
+        try:
+            resolved = os.path.realpath(filepath)
+            within = os.path.commonpath([_memory_base_dir(), resolved]) == _memory_base_dir()
+            if not within:
+                continue
+            info = _read_prompt_file(resolved)
+            if info["task"] == task and resolved != target_path:
+                _set_active(resolved, False)
+        except Exception:
+            pass
+
+    # Activate target
+    _set_active(target_path, True)
+
+    if config.git.auto_commit:
+        try:
+            subprocess.run(
+                ["git", "add", os.path.join("prompts", "*.md")],
+                cwd=_memory_base_dir(), check=False,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"palinode: activate prompt {name} for task={task}"],
+                cwd=_memory_base_dir(), check=False,
+            )
+        except Exception as e:
+            logger.warning(f"Git commit for prompt activation failed: {e}")
+
+    return {"activated": name, "task": task}
+
+
+class MigrateOpenClawRequest(BaseModel):
+    path: str
+    dry_run: bool = False
+
+
+@app.post("/migrate/openclaw")
+def migrate_openclaw_api(req: MigrateOpenClawRequest) -> dict:
+    """Import a MEMORY.md from OpenClaw into Palinode.
+
+    Parses each ## section into a separate memory file with heuristic
+    type detection (person / decision / project / insight).
+
+    Args:
+        req: Request body with ``path`` (absolute or relative to memory_dir)
+             and optional ``dry_run`` flag.
+
+    Returns:
+        dict with sections_found, files_created, files_skipped, log_file, dry_run.
+    """
+    from palinode.migration.openclaw import run_migration
+
+    path = req.path
+    if "\x00" in path:
+        raise HTTPException(status_code=400, detail="Null bytes are not allowed in path")
+
+    # Resolve relative paths against memory_dir; reject absolute paths that
+    # point outside it (absolute paths that are already safe are accepted).
+    if not os.path.isabs(path):
+        base = _memory_base_dir()
+        resolved_path = os.path.realpath(os.path.join(base, path))
+        try:
+            within = os.path.commonpath([base, resolved_path]) == base
+        except ValueError:
+            within = False
+        if not within:
+            raise HTTPException(status_code=403, detail="Path traversal rejected")
+        path = resolved_path
+
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    try:
+        result = run_migration(source_path=path, dry_run=req.dry_run)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"OpenClaw migration failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/migrate/mem0")

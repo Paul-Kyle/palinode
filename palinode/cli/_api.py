@@ -48,8 +48,8 @@ class PalinodeAPI:
         response.raise_for_status()
         return response.json()
 
-    def consolidate(self, dry_run: bool = False):
-        response = self.client.post("/consolidate", json={"dry_run": dry_run})
+    def consolidate(self, dry_run: bool = False, nightly: bool = False):
+        response = self.client.post("/consolidate", json={"dry_run": dry_run, "nightly": nightly})
         response.raise_for_status()
         return response.json()
 
@@ -103,6 +103,15 @@ class PalinodeAPI:
             response = self.client.get(f"/entities/{entity}", timeout=10.0)
         else:
             response = self.client.get("/entities", timeout=10.0)
+        response.raise_for_status()
+        return response.json()
+
+    def migrate_openclaw(self, path: str, dry_run: bool = False):
+        response = self.client.post(
+            "/migrate/openclaw",
+            json={"path": path, "dry_run": dry_run},
+            timeout=120.0,
+        )
         response.raise_for_status()
         return response.json()
 

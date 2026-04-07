@@ -30,3 +30,7 @@ This project uses Palinode for persistent memory (MCP server: palinode).
 - Raw code (git handles that)
 - Step-by-step debug logs (save the resolution, not the journey)
 - Trivial changes ("fixed typo" — not worth a memory)
+
+### If MCP is not connected:
+- Use CLI equivalents: `palinode search "query"`, `palinode save "content" --type Decision`
+- Check connection: `palinode status` or `palinode_status()`

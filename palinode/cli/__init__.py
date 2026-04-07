@@ -15,6 +15,8 @@ from palinode.cli.read import read
 from palinode.cli.list import list_cmd
 from palinode.cli.lint import lint
 from palinode.cli.ingest import ingest
+from palinode.cli.prompt import prompt
+from palinode.cli.migrate import migrate
 
 @click.group()
 def main():
@@ -50,6 +52,10 @@ main.add_command(read)
 main.add_command(list_cmd, name="list")
 main.add_command(lint)
 main.add_command(ingest)
+main.add_command(migrate)
+
+# Prompts
+main.add_command(prompt)
 
 # Session
 main.add_command(session_end)

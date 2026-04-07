@@ -3,12 +3,13 @@ from palinode.cli._api import api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
 
 @click.command()
+@click.option("--nightly", is_flag=True, help="Run lightweight nightly pass (today only, UPDATE/SUPERSEDE)")
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying")
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
-def consolidate(dry_run, fmt):
+def consolidate(nightly, dry_run, fmt):
     """Run or preview weekly compaction."""
     try:
-        data = api_client.consolidate(dry_run=dry_run)
+        data = api_client.consolidate(dry_run=dry_run, nightly=nightly)
         
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()
         

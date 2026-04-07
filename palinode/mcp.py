@@ -456,6 +456,35 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {},
             },
         ),
+        types.Tool(
+            name="palinode_prompt",
+            description=(
+                "List, read, or activate versioned LLM prompts stored as memory files in the prompts/ directory. "
+                "Use 'list' to browse available prompts, 'read' to view a specific prompt's content, "
+                "or 'activate' to set a prompt version as active (deactivates others of the same task)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform: 'list', 'read', or 'activate'",
+                        "enum": ["list", "read", "activate"],
+                        "default": "list",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Prompt name (required for 'read' and 'activate')",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "For 'list': filter by task type",
+                        "enum": ["compaction", "extraction", "update", "classification"],
+                    },
+                },
+                "required": ["action"],
+            },
+        ),
     ]
 
 
@@ -712,6 +741,63 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             if resp.status_code != 200:
                 return _text(f"Lint failed: {resp.text}")
             return _text(json.dumps(resp.json(), indent=2))
+
+        # ── prompt ────────────────────────────────────────────────────────
+        elif name == "palinode_prompt":
+            import json as _json
+            action = arguments.get("action", "list")
+
+            if action == "list":
+                params: dict[str, str] = {}
+                if arguments.get("task"):
+                    params["task"] = arguments["task"]
+                resp = await _get("/prompts", params=params)
+                if resp.status_code != 200:
+                    return _text(f"Error listing prompts: {resp.text}")
+                data = resp.json()
+                if not data:
+                    return _text("No prompts found.")
+                lines = []
+                for p in data:
+                    active_tag = " [active]" if p.get("active") else ""
+                    lines.append(
+                        f"{p['name']} (task={p.get('task','')}, "
+                        f"model={p.get('model','')}, "
+                        f"v{p.get('version','')}){active_tag}"
+                    )
+                return _text("\n".join(lines))
+
+            elif action == "read":
+                pname = arguments.get("name")
+                if not pname:
+                    return _text("Error: name required for 'read'")
+                resp = await _get(f"/prompts/{pname}")
+                if resp.status_code == 404:
+                    return _text(f"Prompt '{pname}' not found.")
+                if resp.status_code != 200:
+                    return _text(f"Error reading prompt: {resp.text}")
+                data = resp.json()
+                header = (
+                    f"# {data['name']} (task={data.get('task','')}, "
+                    f"model={data.get('model','')}, v{data.get('version','')})"
+                )
+                active_note = " [ACTIVE]" if data.get("active") else ""
+                return _text(f"{header}{active_note}\n\n{data.get('content','')}")
+
+            elif action == "activate":
+                pname = arguments.get("name")
+                if not pname:
+                    return _text("Error: name required for 'activate'")
+                resp = await _post(f"/prompts/{pname}/activate")
+                if resp.status_code == 404:
+                    return _text(f"Prompt '{pname}' not found.")
+                if resp.status_code != 200:
+                    return _text(f"Error activating prompt: {resp.text}")
+                data = resp.json()
+                return _text(f"Activated '{data['activated']}' for task={data['task']}")
+
+            else:
+                return _text(f"Unknown action: {action}. Use 'list', 'read', or 'activate'.")
 
         else:
             return _text(f"Unknown tool: {name}")

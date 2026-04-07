@@ -17,14 +17,15 @@ def test_empty_index_returns_empty():
 def test_search_hybrid_rrf():
     with patch("palinode.core.store.search") as mock_vec:
         with patch("palinode.core.store.search_fts") as mock_fts:
-            mock_vec.return_value = [{"file_path": "a.md", "content": "text", "score": 0.9}]
-            mock_fts.return_value = [{"file_path": "b.md", "content": "text", "score": 0.5}]
-            
-            res = store.search_hybrid("query", query_embedding=[0.0]*1024, top_k=2)
-            assert len(res) == 2
-            # Should normalize scores
-            assert "score" in res[0]
-            assert "score" in res[1]
+            with patch("palinode.core.store.get_db"):
+                mock_vec.return_value = [{"file_path": "a.md", "content": "text", "score": 0.9}]
+                mock_fts.return_value = [{"file_path": "b.md", "content": "text", "score": 0.5}]
+
+                res = store.search_hybrid("query", query_embedding=[0.0]*1024, top_k=2)
+                assert len(res) == 2
+                # Should normalize scores
+                assert "score" in res[0]
+                assert "score" in res[1]
 
 def test_search_hybrid_empty():
     with patch("palinode.core.store.search") as mock_vec:

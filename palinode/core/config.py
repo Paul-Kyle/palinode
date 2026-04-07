@@ -151,6 +151,13 @@ class SearchConfig:
     hybrid_enabled: bool = True
 
 @dataclass
+class NightlyConfig:
+    """Lightweight daily update configurations."""
+    enabled: bool = True
+    lookback_days: int = 1
+    allowed_ops: list[str] = field(default_factory=lambda: ["UPDATE", "SUPERSEDE"])
+
+@dataclass
 class ConsolidationConfig:
     """Interval LLM job configuration settings logic."""
     enabled: bool = True
@@ -163,6 +170,7 @@ class ConsolidationConfig:
     llm_fallbacks: list[dict] = field(default_factory=list)
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
+    nightly: NightlyConfig = field(default_factory=NightlyConfig)
 
 @dataclass
 class DecayConfig:
