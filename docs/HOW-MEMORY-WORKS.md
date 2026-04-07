@@ -71,10 +71,9 @@ Core memory persists in the model's context window from turn 1 until OpenClaw co
 **Currently ~6 core files:**
 
 - `people/paul.md` — who you are
-- `people/peter.md` — your collaborator
-- `projects/mm-kmd.md` — current project status
+- `people/alice.md` — your collaborator
+- `projects/my-app.md` — current project status
 - `projects/palinode.md` — memory system status
-- `projects/color-class.md` — teaching schedule
 - `projects/infrastructure.md` — homelab machines and services
 
 ### Phase 2: Topic-Specific Search (per message)
@@ -108,8 +107,8 @@ Palinode maintains a background index of "triggers" (specific situational contex
 > Mobile checkout redesign. v2 on React Native...
 
 ## Relevant Context
-[decisions] MM-KMD will use 5 acts instead of 3. Peter's creative direction...
-[insights] For LoRA training, 90 curated samples outperform 1,623 raw...
+[decisions] My App will use 5 modules instead of 3. Alice's design direction...
+[insights] For model fine-tuning, 90 curated samples outperform 1,623 raw...
 </palinode-memory>
 ```text
 
@@ -184,7 +183,7 @@ Alice wants async check-ins instead of meetings -es
 ## 4. Weekly Consolidation (Sunday 3am UTC)
 
 **Script:** `palinode/consolidation/runner.py`  
-**LLM:** OLMo 3.1:32b on vLLM (localhost:8000)  
+**LLM:** OLMo 3.1:32b via Ollama (localhost:11434)
 **Schedule:** `0 3 * * 0` (crontab)  
 **Prompt:** `specs/prompts/consolidation.md`
 
@@ -207,7 +206,7 @@ graph LR
 
 1. **Collect** — reads all `daily/YYYY-MM-DD.md` files from the last 7 days
 2. **Group** — assigns notes to projects by:
-   - Entity tags in frontmatter (`entities: [project/mm-kmd]`)
+   - Entity tags in frontmatter (`entities: [project/my-app]`)
    - Keyword fallback (scans content for project names, tool names, etc.)
 3. **Analyze** — for each project, sends notes + current summary + existing decisions to the LLM (OLMo 3.1:32b) with the compaction prompt to determine what facts are relevant
 4. **Determine Operations** — the LLM returns structured JSON operations (`KEEP`, `UPDATE`, `MERGE`, `SUPERSEDE`, `ARCHIVE`) determining the fate of each active fact
@@ -230,21 +229,21 @@ Each project compaction is capped at ~6,000 chars of daily notes (1,500 per note
 ```text
 ## Session 2026-03-29T04:26:16Z
 user: completed M5 Phase 4 tests.
-assistant: Updating MM-KMD with testing progress.
+assistant: Updating My App with testing progress.
 
 ## Session 2026-03-29T16:12:25Z  
 user: run the consolidation
-assistant: Processed 18 notes, MM-KMD summary updated via 5 KEEP, 2 UPDATE, 1 ARCHIVE ops...
+assistant: Processed 18 notes, My App summary updated via 5 KEEP, 2 UPDATE, 1 ARCHIVE ops...
 ```text
 
-**After consolidation (projects/mm-kmd-status.md):**
+**After consolidation (projects/my-app-status.md):**
 
 ```text
 ## Active Milestones
 - <!-- fact:m5-completed --> [2026-03-29] M5 Phase 4 tests completed successfully.
 ```text
 
-**Archived directly to (projects/mm-kmd-history.md):**
+**Archived directly to (projects/my-app-history.md):**
 
 ```text
 ## Archived Facts
@@ -298,7 +297,7 @@ Every memory change is a git commit. This enables:
 | --- | --- | --- |
 | `palinode_diff` | What changed recently? | "Show me changes this week" |
 | `palinode_blame` | When was this fact recorded? | "When did Alice mention async?" |
-| `palinode_timeline` | How has this file evolved? | "Show MM-KMD's history" |
+| `palinode_timeline` | How has this file evolved? | "Show My App's history" |
 | `palinode_rollback` | Undo a bad change | "Revert last consolidation" |
 | `palinode_push` | Sync to GitHub | "Backup my memory" |
 
@@ -365,14 +364,14 @@ The consolidation runner uses the prompt in `specs/prompts/compaction.md`. To ch
 Every fact in Palinode has a traceable origin. Here's how a memory evolves:
 
 ```text
-Feb 11  — Mem0 auto-captured: "max_tokens scaling reduces dialogue length"
+Feb 11  — Mem0 auto-captured: "pagination limit reduces API response time"
           (Qdrant, no provenance, no context)
 
 Mar 29  — Backfilled to Palinode: classified by Qwen 72B, written to
-          projects/mm-kmd-milestones.md (commit dcdbf5f)
+          projects/my-app-milestones.md (commit dcdbf5f)
 
 Apr 06  — Weekly consolidation: OLMo distilled 7 days of session notes,
-          updated mm-kmd.md with new status bullets (commit abc1234)
+          updated my-app.md with new status bullets (commit abc1234)
 
 Apr 13  — Manual edit: Alice corrected a fact via palinode_save (commit def5678)
 ```text
@@ -380,14 +379,14 @@ Apr 13  — Manual edit: Alice corrected a fact via palinode_save (commit def567
 **`palinode_blame`** shows both the git date AND the true origin date:
 
 ```text
-## Blame: projects/mm-kmd-milestones.md
+## Blame: projects/my-app-milestones.md
 Origin: 2026-02-11 | Source: mem0-backfill
 Note: Git shows 2026-03-29 (migration date). True origin is 2026-02-11 (from mem0-backfill).
 
-^dcdbf5f (2026-03-29) - [2026-02-11] M5 Phase 1 complete: 9 voice LoRAs deployed
-^dcdbf5f (2026-03-29) - [2026-02-15] M2 closed: memory + personality systems
-abc1234  (2026-04-06) - M6 Phase 1 spec ready: gravity routing fixed
-def5678  (2026-04-13) - M6 Phase 2: Scene Conscience beat detection live
+^dcdbf5f (2026-03-29) - [2026-02-11] M5 Phase 1 complete: all 9 modules deployed
+^dcdbf5f (2026-03-29) - [2026-02-15] M2 closed: auth + notification systems
+abc1234  (2026-04-06) - M6 Phase 1 spec ready: routing fixed
+def5678  (2026-04-13) - M6 Phase 2: real-time sync live
 ```text
 
 For backfilled memories, git blame shows when the file was migrated. The frontmatter `created_at` field preserves the true origin date from the source system (Mem0, QC MCP, etc.). Palinode surfaces both so you always know:
@@ -416,7 +415,7 @@ Backfilled memories enter `palinode-data` with `source: "mem0-backfill"` in thei
 Other memory systems are opaque databases. You can query them but you can't ask:
 
 - "When did I first learn that Alice prefers async?" → `palinode_blame`
-- "What changed about the MM-KMD project this week?" → `palinode_diff`
+- "What changed about the My App project this week?" → `palinode_diff`
 - "Show me every update to my infrastructure notes" → `palinode_timeline`
 - "The last consolidation was bad, undo it" → `palinode_rollback`
 

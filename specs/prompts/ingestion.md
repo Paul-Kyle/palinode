@@ -16,7 +16,7 @@ You receive:
 - `source_type`: pdf | audio_transcript | url | text
 - `source_ref`: filename, URL, or description of origin
 - `raw_text`: the extracted/transcribed text (may be very long)
-- `context`: optional — why the user is ingesting this ("for the color class", "research on memory systems")
+- `context`: optional — why the user is ingesting this ("for the onboarding docs", "research on memory systems")
 
 ## Output
 

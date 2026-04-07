@@ -28,11 +28,11 @@ That's the whole architecture. One directory of `.md` files, one SQLite database
 
 ## One Backend, Every Interface
 
-Palinode doesn't care how you talk to it. The same 17 tools work everywhere:
+Palinode doesn't care how you talk to it. The same 18 tools work everywhere:
 
 | Interface | Transport | Best For |
 |-----------|-----------|----------|
-| **MCP Server** | Streamable HTTP or stdio | Claude Code, Claude Desktop, Zed, Cursor, Antigravity |
+| **MCP Server** | Streamable HTTP or stdio | Claude Code, Claude Desktop, Cursor, Zed |
 | **REST API** | HTTP on :6340 | Scripts, webhooks, custom integrations |
 | **CLI** | Wraps REST API | Cron jobs, SSH, shell scripts (8x fewer tokens than MCP) |
 | **Plugin** | OpenClaw lifecycle hooks | Agent frameworks with inject/extract patterns |
@@ -93,7 +93,7 @@ curl http://localhost:6340/status
 
 ## Tools
 
-17 tools available through every interface:
+18 tools available through every interface:
 
 | Tool | What It Does |
 |------|-------------|
@@ -114,6 +114,7 @@ curl http://localhost:6340/status
 | `trigger` | Prospective recall — auto-inject when a topic comes up |
 | `lint` | Health scan — orphans, stale files, missing fields |
 | `session_end` | Capture summary, decisions, and blockers at end of session |
+| `prompt` | List, show, or activate versioned LLM prompts |
 
 Every tool is accessible as `palinode_<name>` via MCP, `palinode <name>` via CLI, or `POST/GET /<name>` via the REST API.
 

@@ -67,7 +67,7 @@ All of these store things. None of them *remember*.
 **Directory structure:**
 
 ```
-~/clawd/palinode/
+~/.palinode/
 ├── people/          → who you know (relationships, prefs, follow-ups)
 ├── projects/        → what you're building (status, next actions, blockers)
 ├── decisions/       → choices made (rationale, what was rejected, supersedes)
@@ -98,26 +98,26 @@ last_updated: 2026-03-22T15:00:00Z
 category: decision
 status: active
 core: false
-entities: [project/mm-kmd]
+entities: [project/my-app]
 supersedes: []
 confidence: 0.92
-source: session/attractor/2026-03-17
+source: session/2026-03-17
 ---
 
-# Decision: Adopt LangGraph for MA-KMD Orchestration
+# Decision: Adopt FastAPI for My App Backend
 
 ## Statement
-Use LangGraph StateGraph for game orchestration in the multi-agent pivot.
+Use FastAPI for the backend API in the microservices pivot.
 
 ## Rationale
-- DiriGent research validated Director-Actor pattern
-- StateGraph provides explicit state management without LangChain agent abstraction
-- ADR-063 documents the full rationale
+- Async-first design matches our event-driven architecture
+- Type hints provide automatic request validation
+- OpenAPI spec generation simplifies integration testing
 
 ## Alternatives Rejected
-- Pure function calls (too manual for complex game state)
-- CrewAI (role-based paradigm doesn't map to Director-Actor)
-- AutoGen (message-passing model less suitable for state-heavy orchestration)
+- Flask (synchronous, less suited for async workloads)
+- Django REST (too heavy for microservice scope)
+- Express.js (team more proficient in Python)
 ```
 
 **Schemas (typed objects):**
@@ -139,11 +139,11 @@ Use LangGraph StateGraph for game orchestration in the multi-agent pivot.
 
 - **Vector & Keyword store:** SQLite-vec + FTS5 (embedded, no server, single file at `palinode/.palinode.db`)
 - **Embedding model:** BGE-M3 via Ollama (1536d, 8K context, top-tier retrieval)
-- **Embedding server:** Ollama on ***REMOVED***69 (5090 GPU)
+- **Embedding server:** Ollama (local or remote GPU)
 
 **Indexing:**
 
-- File watcher daemon (`watchdog`) monitors `~/clawd/palinode/`
+- File watcher daemon (`watchdog`) monitors the memory directory
 - On file create/modify: parse markdown → split by headings.
 - Deduplication: compute `content_hash` (SHA-256) of text. Skip Ollama embedding call if identical to existing hash.
 - Insert sections to `chunks` table → auto-syncs to FTS5 virtual table → upserts vectors to SQLite-vec.
@@ -257,15 +257,15 @@ When a chunk matches, don't return the chunk alone:
 **Mode 1: Conversational (automatic + explicit)**
 
 - **Automatic:** `agent_end` hook extracts typed memories from every substantive turn
-- **Explicit:** "Remember: Peter wants 5 acts" → classified and filed immediately
+- **Explicit:** "Remember: Alice wants 5 modules" → classified and filed immediately
 - **Channels:** Telegram, Slack, webchat, CLI — all go through OpenClaw → Palinode plugin
 
 **Mode 2: Document ingestion (file drops)**
 
-- Watch folder: `~/Palinode-Inbox/` on MBP, synced via Syncthing to `~/clawd/palinode/inbox/raw/`
+- Watch folder: `~/palinode-inbox/`, synced to `~/.palinode/inbox/raw/`
 - Processing by file type:
   - PDF → text extraction (pymupdf) → LLM summarize + extract → `research/*.md`
-  - Audio (m4a/mp3/wav) → Transcriptor API (***REMOVED***61, GPU Whisper) → transcript → summarize → `research/*.md`
+  - Audio (m4a/mp3/wav) → Whisper transcription → transcript → summarize → `research/*.md`
   - Video → extract audio → Transcriptor → same as audio
   - Markdown/text → classify directly → appropriate bucket
   - URL (.webloc/.url/text containing URL) → fetch → readability extract → summarize → `research/*.md`
@@ -333,7 +333,7 @@ When a chunk matches, don't return the chunk alone:
 
 **Session-start nudge:**
 
-- "You last worked on MM-KMD two days ago. Status: M5 Phase 1 voice LoRAs complete, waiting on Peter feedback."
+- "You last worked on My App two days ago. Status: M5 Phase 1 complete, waiting on Alice's feedback."
 - Injected as part of Phase 1 context
 
 ### 5.8 Quality Metrics
@@ -361,7 +361,7 @@ When a chunk matches, don't return the chunk alone:
 ┌─────────────────────────────────────────────────────────────┐
 │ SOURCE OF TRUTH                                              │
 │                                                              │
-│  Markdown files in ~/clawd/palinode/                          │
+│  Markdown files in ~/.palinode/                          │
 │  Git-versioned (human-readable, diffable, portable)         │
 │  YAML frontmatter for structured metadata                   │
 └──────────────────────────┬──────────────────────────────────┘
@@ -389,7 +389,7 @@ When a chunk matches, don't return the chunk alone:
 │  File Watcher (Python watchdog, systemd service)            │
 │  - Monitors palinode/ → embeds → upserts to SQLite-vec       │
 │                                                              │
-│  Embedding Generation (Ollama BGE-M3 on ***REMOVED***69)         │
+│  Embedding Generation (Ollama BGE-M3)                    │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -403,7 +403,7 @@ When a chunk matches, don't return the chunk alone:
 │                                                              │
 │  Capture Points                                              │
 │  - Telegram / Slack / webchat / CLI (via OpenClaw)          │
-│  - MBP watch folder (Syncthing → inbox/raw/)               │
+│  - Watch folder (synced to inbox/raw/)                      │
 │  - Web capture (agent fetches URL → summarizes → files)     │
 │                                                              │
 │  Surfacing                                                   │
@@ -423,7 +423,7 @@ When a chunk matches, don't return the chunk alone:
 CAPTURE                          PROCESSING                    MEMORY
 ───────                          ──────────                    ──────
 
-Telegram ────┐                                                 ~/clawd/palinode/
+Telegram ────┐                                                 ~/.palinode
 Slack ───────┤                   ┌──────────────┐              ├── people/*.md
 Webchat ─────┼→ OpenClaw ──────→│ Palinode Plugin │              ├── projects/*.md
 CLI ─────────┘   Agent          │              │              ├── decisions/*.md
@@ -432,13 +432,13 @@ CLI ─────────┘   Agent          │              │        
                   │              │ tools        │──→ search    ├── daily/*.md
                   │              └──────┬───────┘              ├── research/*.md
                   │                     │                      ├── inbox/
-MBP Watch ───┐   │                     ▼                      ├── archive/
-NAS Drop ────┼───┼──→ Ingestion → Extraction                  ├── .palinode.db
+Watch ───────┐   │                     ▼                      ├── archive/
+File Drop ───┼───┼──→ Ingestion → Extraction                  ├── .palinode.db
 URL Capture ─┘   │    Pipeline    Pipeline                    └── PROGRAM.md
                   │        │           │
                   │        ▼           ▼
                   │    Transcriptor  Memory Manager
-                  │    (***REMOVED***61)  (typed schemas)
+                  │                  (typed schemas)
                   │                 ADD/UPDATE/DELETE/NOOP
                   │                     │
                   │                     ▼
@@ -494,12 +494,12 @@ Sunday Cron ────→ Weekly review → Telegram
 extensions:
   openclaw-palinode:
     # Paths
-    palinodeDir: "~/clawd/palinode"               # Memory store root
+    palinodeDir: "~/.palinode"               # Memory store root
     programFile: "PROGRAM.md"                  # Memory manager behavior spec (relative to palinodeDir)
     promptsDir: "specs/prompts"                # System prompts directory (relative to palinodeDir)
 
     # Embedding
-    ollamaUrl: "http://***REMOVED***69:11434"       # Ollama endpoint for embeddings
+    ollamaUrl: "http://localhost:11434"       # Ollama endpoint for embeddings
     embeddingModel: "bge-m3"                   # Model name — change without code changes
 
     # Behavior
@@ -582,16 +582,16 @@ When you tune extraction, you edit a markdown file. `git log specs/prompts/extra
 
 ### Level 2: Task Prompts (instructions given to agents)
 
-When you spend 30 minutes writing a prompt to an agent — "build a RAW grading assignment with Colorist/Filmmaker role structure, CalArts-sensitive" — that prompt is the specification. The output is the compiled artifact. Losing the prompt means losing the intent, constraints, and reasoning.
+When you spend 30 minutes writing a prompt to an agent — "build a data pipeline spec with Producer/Consumer role structure" — that prompt is the specification. The output is the compiled artifact. Losing the prompt means losing the intent, constraints, and reasoning.
 
 ```
 specs/task-prompts/
-├── mm-kmd/              ← M*-EXECUTE-PROMPT.md files (already doing this!)
-├── color-class/         ← assignment specs, lesson plan prompts
+├── my-app/              ← M*-EXECUTE-PROMPT.md files (already doing this!)
+├── onboarding/          ← assignment specs, process prompts
 └── palinode/              ← research prompts, build prompts
 ```
 
-The M-EXECUTE-PROMPT.md pattern from MM-KMD is already this practice — generalized across all work.
+The M-EXECUTE-PROMPT.md pattern from My App is already this practice — generalized across all work.
 
 **Capture rule:** When a substantial prompt produces a substantial output, save the prompt alongside the output. The memory manager should detect "this looks like a build spec or research request" and offer to save it to `specs/task-prompts/`.
 
@@ -690,7 +690,7 @@ Prompts are not disposable. They're the most durable artifact in the system — 
 | Phase | Scope | Timeline |
 | --- | --- | --- |
 | **0: MVP** | SQLite-vec + file watcher + session-end extraction + 2 tools + Phase 1 injection | 1 week |
-| **0.5: Capture** | Slack channel + Telegram formalization + MBP watch folder + ingestion pipeline | During/after MVP |
+| **0.5: Capture** | Slack channel + Telegram formalization + watch folder + ingestion pipeline | During/after MVP |
 | **1: Core Memory** | Two-phase injection + core memory files + retire MEMORY.md | Week 2 |
 | **2: Consolidation** | Weekly cron + entity linking + insights extraction | Weeks 3-4 |
 | **3: Migration** | Backfill from Mem0 (2,632) + QC MCP (14K) selectively | Week 4+ |

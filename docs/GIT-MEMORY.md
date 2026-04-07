@@ -24,20 +24,20 @@ Find out *when* and *why* a specific fact was recorded. Palinode's blame shows *
 This is critical for backfilled memories: a fact captured by Mem0 on February 11th and migrated to Palinode on March 29th shows both dates:
 
 ```bash
-palinode blame projects/mm-kmd-milestones.md --search "LoRA"
+palinode blame projects/my-app-milestones.md --search "deploy"
 ```
 ```
-## Blame: projects/mm-kmd-milestones.md
+## Blame: projects/my-app-milestones.md
 Origin: 2026-02-11 | Source: mem0-backfill
 Note: Git shows 2026-03-29 (migration date). True origin is 2026-02-11 (from mem0-backfill).
 
-^dcdbf5f (2026-03-29) - [2026-02-15] M5 Phase 1 complete: all 9 voice LoRAs deployed
+^dcdbf5f (2026-03-29) - [2026-02-15] M5 Phase 1 complete: all 9 modules deployed
 ```
 
 For natively-captured memories, both dates match:
 ```bash
-palinode blame decisions/kmd-five-acts.md --search "5 acts"
-# abc1234 (2026-04-06) Peter wants 5 acts instead of 3
+palinode blame decisions/app-five-modules.md --search "5 modules"
+# abc1234 (2026-04-06) Alice wants 5 modules instead of 3
 # (origin: 2026-04-06, source: palinode — dates match)
 ```
 
@@ -46,7 +46,7 @@ palinode blame decisions/kmd-five-acts.md --search "5 acts"
 Watch a structured memory evolve. Timeline shows all changes to a specific file, ordered chronologically.
 
 ```bash
-palinode timeline projects/mm-kmd.md
+palinode timeline projects/my-app.md
 ```
 
 ### 4. Rollback (Admin Only)
@@ -54,7 +54,7 @@ palinode timeline projects/mm-kmd.md
 If an agent mistakenly consolidates or overwrites data, you can revert the file. Palinode's rollback is safe: it creates a *new* commit that restores the file, preserving the erroneous history just in case.
 
 ```bash
-palinode rollback projects/mm-kmd.md --commit a1b2c3d
+palinode rollback projects/my-app.md --commit a1b2c3d
 ```
 
 > **Note:** Rollback defaults to a dry run. To actually apply the change, you must pass `--execute`.

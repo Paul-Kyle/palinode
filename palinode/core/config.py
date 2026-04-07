@@ -171,6 +171,7 @@ class ConsolidationConfig:
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
     nightly: NightlyConfig = field(default_factory=NightlyConfig)
+    keyword_map: dict[str, list[str]] | None = None
 
 @dataclass
 class DecayConfig:

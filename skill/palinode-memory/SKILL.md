@@ -56,15 +56,15 @@ Guidelines:
 Example save calls:
 ```
 palinode_save(
-  content="Thomas/Ty are half-brothers, 14-year gap. Father alive but not present.",
+  content="Alice and Bob are co-founders, 3-year gap in joining. CEO role is shared.",
   type="PersonMemory",
-  entities=["person/peter", "project/mm-kmd"]
+  entities=["person/alice", "project/my-app"]
 )
 
 palinode_save(
-  content="Curation > volume for LoRA training. 90 curated samples >> 1,623 raw.",
+  content="Curation > volume for training data. 90 curated samples >> 1,623 raw.",
   type="Insight",
-  entities=["project/mm-kmd"]
+  entities=["project/my-app"]
 )
 ```
 
@@ -73,13 +73,13 @@ palinode_save(
 Register an intention when you want a memory to auto-surface in future turns:
 
 ```
-palinode_trigger(action="add", description="LoRA training curation", 
+palinode_trigger(action="add", description="training data curation",
                memory_file="insights/curation-over-volume.md", threshold=0.72)
 ```
 
 Triggers fire when the user's message semantically matches `description`. Good for:
-- "whenever we talk about LoRA training, surface the curation insight"
-- "when Peter's canon decisions come up, surface the character relationships"
+- "whenever we talk about training data, surface the curation insight"
+- "when Alice's design decisions come up, surface the architecture relationships"
 
 ## Git Tools
 

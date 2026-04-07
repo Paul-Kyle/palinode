@@ -83,7 +83,7 @@ Register once, fires automatically whenever the context matches:
 ```python
 palinode_trigger(
     action="add",
-    description="LoRA training data curation",
+    description="training data curation",
     memory_file="insights/curation-over-volume.md",
     threshold=0.72
 )
@@ -91,5 +91,5 @@ palinode_trigger(
 
 Good patterns:
 - Project-specific risks → `"when working on [project], surface [file]"`
-- Recurring gotchas → `"when deploying vLLM, surface memory/vllm-oom-lessons.md"`
-- People context → `"when Peter's canon comes up, surface people/peter.md"`
+- Recurring gotchas → `"when deploying models, surface memory/oom-lessons.md"`
+- People context → `"when Alice's design decisions come up, surface people/alice.md"`

@@ -8,7 +8,7 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
 @click.option("--entity", "entities", multiple=True, help="Entity tag (e.g. person/X, project/X)")
 @click.option("--file", "file_path", type=click.Path(exists=True), help="Read content from file instead of argument")
 @click.option("--title", help="Optional title override")
-@click.option("--source", help="Source surface (e.g., claude-code, antigravity)")
+@click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
 def save(content, memory_type, entities, file_path, title, source, fmt):
     """Store a new memory."""

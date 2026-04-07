@@ -30,7 +30,7 @@ cd ~/.hermes-agent && pip install -e .
 
 Hermes needs an LLM backend. Options:
 - **OpenRouter** (easiest): set `OPENROUTER_API_KEY`
-- **Local vLLM**: point at your vLLM endpoint
+- **Local inference server**: point at your OpenAI-compatible endpoint
 - **Ollama**: configure in `~/.hermes/config.yaml`
 
 ---

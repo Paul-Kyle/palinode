@@ -2,7 +2,7 @@
 Consolidation Runner
 
 Orchestrates weekly memory consolidation: daily → curated.
-Uses OLMo 3.1 on vLLM for LLM-powered distillation.
+Uses a configurable LLM for distillation (any OpenAI-compatible endpoint).
 """
 from __future__ import annotations
 
@@ -102,11 +102,8 @@ def _collect_daily_notes(lookback_days: int) -> list[dict]:
         
         # Fallback: detect projects by keyword if no entity refs found
         if not any(m.startswith("project/") for m in mentions):
-            keyword_map = {
-                "project/mm-kmd": ["MM-KMD", "MM_KMD", "Kill My Darlings", "murder mystery", "OLMo", "LoRA", "vLLM", "LangGraph", "character agent", "Director", "mastermind"],
+            keyword_map = config.consolidation.keyword_map or {
                 "project/palinode": ["Palinode", "palinode", "memory system", "SQLite-vec", "BGE-M3", "palinode_search"],
-                "project/color-class": ["FPFV", "color grading", "DaVinci Resolve", "Color Class", "RAW grading", "Yumi"],
-                "project/infrastructure": ["your-server", "5090", "5060", "Ollama", "Tailscale", "homelab", "Mac Studio"],
             }
             content_lower = content.lower()
             for project_ref, keywords in keyword_map.items():

@@ -32,24 +32,24 @@ Extract only things that will be useful **across sessions** — facts that a fut
 
 - *Example:* "We're using SQLite-vec instead of Qdrant because it's embedded, no server, matches the file-based philosophy." → Decision with rationale + alternatives.
 - *Example:* "Alice says Bob and Charlie are joining the new checkout redesign team." → Decision, linked to person/alice + project/checkout.
-- *Example:* "Dropped legacy IE11 support from the roadmap — not relevant for most users." → Decision about web project.
+- *Example:* "Dropped legacy browser support from the roadmap — not relevant for most users." → Decision about web project.
 
 **People context** — relationships, preferences, roles, follow-ups owed, communication style.
 
 - *Example:* "Alice is the designer for checkout redesign. She controls the UI patterns. Meetings are ~monthly. She needs a prototype link before each meeting." → PersonMemory.
-- *Example:* "Alice manages the sound studio at Building B. Clients can book sessions at $25/hour." → PersonMemory with role context.
+- *Example:* "Alice manages the design studio at Building B. Clients can book sessions at $25/hour." → PersonMemory with role context.
 - *Example:* "Alice gets annoyed by unsolicited time-of-day comments and sycophantic filler." → Preference (already known — NOOP if this is in memory).
 
 **Project state changes** — status shifts, milestones reached, blockers discovered, architecture changes. Not every line of work — the *transitions*.
 
-- *Example:* "M5 Phase 1 voice LoRAs complete. All 9 adapters trained and deployed on vLLM." → ProjectSnapshot update.
-- *Example:* "Week 7 class: round-tripping didn't happen, pushed to Week 8. Lookbook presentations happened instead." → ProjectSnapshot update for color-class.
+- *Example:* "M5 Phase 1 complete. All 9 modules deployed to staging." → ProjectSnapshot update.
+- *Example:* "Sprint 7 demo: live demo didn't happen, pushed to Sprint 8. Design review happened instead." → ProjectSnapshot update.
 - *Example:* "QC MCP was down — forgot to restart after updates. Back online now." → Infrastructure status change.
 
 **Lessons learned** — things that prevent repeating mistakes.
 
-- *Example:* "Curation > volume for LoRA training. 90 curated Thomas samples >> 1,623 raw Mary samples." → Insight.
-- *Example:* "Don't inject speech_style or dialogue_rules.yaml into agent prompts — crashed beat fire from 76% to 5%." → Insight (MM-KMD specific).
+- *Example:* "Curation > volume for training data. 90 curated samples >> 1,623 raw samples." → Insight.
+- *Example:* "Don't inject style overrides into agent prompts — degraded output quality from 76% to 5%." → Insight (project-specific).
 - *Example:* "Mem0 autorecall at 0.5 threshold gives trash results. Trying 0.7." → Insight about tooling.
 
 **Commitments and action items** — things promised to people, deadlines agreed to, follow-ups needed.
@@ -61,24 +61,24 @@ Extract only things that will be useful **across sessions** — facts that a fut
 
 **Preferences** — but only when explicitly stated or clearly demonstrated over multiple sessions.
 
-- *Example:* "Alice uses Antigravity IDE + Gemini 3.1 Pro (High) as default for executing milestone build specs." → Preference (tool + workflow).
+- *Example:* "Alice uses VS Code + Gemini 3.1 Pro (High) as default for executing milestone build specs." → Preference (tool + workflow).
 - *Example:* "Don't comment on time of day or suggest quitting." → Preference (communication). Already known — likely NOOP.
 - *NOT example:* Paul used vim once in a session → don't infer "prefers vim." Single instances aren't preferences.
 
 **Technical context** — extract when it represents a *decision*, not just mentioned in passing.
 
-- *Example:* "vLLM running on 5090 with --max-loras 4 --max-lora-rank 16. OOM at 12×r64." → Decision about infrastructure config.
+- *Example:* "Ollama running with --gpu-layers 35. OOM at 40 layers with 14B model." → Decision about infrastructure config.
 - *NOT example:* "Running `git status`" → not a memory.
 
 **Creative direction** — for projects where narrative/artistic choices carry weight.
 
-- *Example:* "Level 3 identity: rich narrative identity where speech patterns are implied, no instructions needed. YAML=DNA, AI=Life." → Decision about MM-KMD character design philosophy.
-- *Example:* "Student from Bollywood described her own chromophobia — anxiety about using color in Western film school context." → Insight from color class.
+- *Example:* "Level 3 component: rich component identity where behavior is implied by structure, no extra config needed." → Decision about project design philosophy.
+- *Example:* "New team member described their experience migrating from a monolith — anxiety about microservices in a small-team context." → Insight from onboarding.
 
 ### Never extract
 
 - **Routine Q&A** — "how do I restart nginx" is not a memory
-- **Troubleshooting steps** — debugging output, error messages, stack traces. The *lesson* from debugging ("OOM at 12×r64 because max_loras pre-allocates GPU buffers") is worth keeping; the steps to diagnose it are not.
+- **Troubleshooting steps** — debugging output, error messages, stack traces. The *lesson* from debugging ("OOM at 40 layers because the model pre-allocates GPU buffers") is worth keeping; the steps to diagnose it are not.
 - **Ephemeral context** — "I'm tired," "let's take a break," "what time is it"
 - **Secrets** — passwords, API keys, tokens, credentials. NEVER. Even if the human says "remember this password." Log a warning instead.
 - **The agent's own responses** — unless they contain a commitment or promise to the human
@@ -169,9 +169,9 @@ Who's involved and what their role is. Link to person files.
 ## Architecture & Stack
 Key technical or structural decisions that shape how work gets done.
 (Only for technical projects. Update when architecture changes, not every session.)
-- LangGraph StateGraph for orchestration
-- Ollama for M0-M4, vLLM for M5
-- Tension-based steering (DiriGent-inspired)
+- FastAPI for backend services
+- Ollama for embeddings and inference
+- Event-driven architecture
 
 ## Status
 Current state in 2-3 sentences. (Updated by consolidation weekly.)
@@ -251,7 +251,7 @@ Action items are not standalone files. They're checkboxes in the relevant person
 ```markdown
 ## Follow-ups
 - [ ] Send Alice the new checkout flow (due: 2026-03-25)
-- [x] Review M5 Phase 1 voice LoRA results ~~(done 2026-03-20)~~
+- [x] Review M5 Phase 1 deployment results ~~(done 2026-03-20)~~
 ```
 
 ### ResearchRef → `research/{date}-{slug}.md`
@@ -333,7 +333,7 @@ Feed all recent notes to a pattern-detection pass:
 
 - Look for: recurring themes, repeated frustrations, things mentioned 3+ times across different contexts
 - Each pattern → an Insight with evidence_refs
-- "You've mentioned context window limitations across MM-KMD, Palinode, and class prep — this is a pattern"
+- "You've mentioned context window limitations across My App, Palinode, and other projects — this is a pattern"
 
 ### Entity maintenance
 
@@ -388,7 +388,7 @@ A bad memory is:
 - Vague ("we talked about the project")
 - Duplicate (already in another file with the same content)
 - Ephemeral (true today, irrelevant tomorrow, with no lasting value)
-- Unlinked (mentions Peter but no entity reference — invisible to cross-reference)
+- Unlinked (mentions Alice but no entity reference — invisible to cross-reference)
 
 ---
 
@@ -427,8 +427,8 @@ PROGRAM.md defines behavior
 PROGRAM.md is not a static document. It's the experiment log for memory behavior. Every edit to this file should include a comment explaining what changed and why:
 
 ```markdown
-<!-- 2026-04-15: Added "infrastructure state" to Sometimes Extract after 3 sessions 
-     where vLLM/Ollama config changes weren't captured and had to be re-explained -->
+<!-- 2026-04-15: Added "infrastructure state" to Sometimes Extract after 3 sessions
+     where Ollama config changes weren't captured and had to be re-explained -->
 ```
 
 This turns PROGRAM.md into a history of how the memory system learned to think — the same way Karpathy's `results.tsv` tracks how the training code evolved.

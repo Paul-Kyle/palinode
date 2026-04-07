@@ -23,12 +23,12 @@ user:
   roles: [film/video faculty, software developer]
 
 active_projects:
-  - name: MM-KMD
+  - name: My App
     status: M5 Phase 1 complete
-    current_work: Voice LoRA deployment on vLLM
-  - name: Color Class
-    status: Week 8 upcoming
-    current_work: RAW/LOG lecture prep
+    current_work: Module deployment to staging
+  - name: Dashboard
+    status: Sprint 8 upcoming
+    current_work: Analytics integration prep
 ```
 
 Followed by short markdown sections for preferences, decisions, people.

@@ -18,7 +18,7 @@ def generate_fact_id(file_path: str, line_text: str) -> str:
     """Generate a deterministic fact ID from file path + content.
     
     Format: {category}-{file_slug}-{content_hash[:6]}
-    Example: mm-kmd-arch-a3f2b1
+    Example: my-app-arch-a3f2b1
     """
     file_slug = os.path.splitext(os.path.basename(file_path))[0]
     content_hash = stable_md5_hexdigest(line_text.strip())[:6]

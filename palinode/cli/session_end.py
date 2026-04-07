@@ -11,7 +11,7 @@ from palinode.cli._format import print_result, get_default_format, OutputFormat
 @click.option("--decision", "-d", multiple=True, help="Key decision made (repeatable)")
 @click.option("--blocker", "-b", multiple=True, help="Open blocker or next step (repeatable)")
 @click.option("--project", "-p", default=None, help="Project slug to append status to (e.g., 'palinode')")
-@click.option("--source", help="Source surface (e.g., claude-code, antigravity)")
+@click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None, help="Output format")
 def session_end(summary, decision, blocker, project, source, fmt):
     """Capture session outcomes to daily notes and project status.

@@ -25,41 +25,41 @@ Return a JSON array of memory items. Each item must match one of these schemas:
 [
   {
     "type": "PersonMemory",
-    "name": "Peter",
-    "slug": "peter",
-    "content": "Peter wants the game to run 5 acts instead of 3.",
-    "entities": ["project/mm-kmd"],
+    "name": "Alice",
+    "slug": "alice",
+    "content": "Alice wants the app to have 5 modules instead of 3.",
+    "entities": ["project/my-app"],
     "confidence": 0.92
   },
   {
     "type": "Decision",
-    "slug": "kmd-five-acts",
-    "content": "MM-KMD will use 5 acts instead of 3.",
-    "rationale": "Peter's creative direction — 3 acts doesn't give enough room for the full murder mystery arc.",
-    "entities": ["project/mm-kmd", "person/peter"],
+    "slug": "app-five-modules",
+    "content": "My App will use 5 modules instead of 3.",
+    "rationale": "Alice's design direction — 3 modules doesn't give enough room for the full user workflow.",
+    "entities": ["project/my-app", "person/alice"],
     "confidence": 0.88
   },
   {
     "type": "ProjectSnapshot",
-    "slug": "mm-kmd",
-    "content": "M5 Phase 1 voice LoRAs complete. All 9 adapters trained and deployed on vLLM.",
-    "entities": ["project/mm-kmd"],
+    "slug": "my-app",
+    "content": "M5 Phase 1 complete. All 9 modules deployed to staging.",
+    "entities": ["project/my-app"],
     "confidence": 0.95
   },
   {
     "type": "Insight",
     "slug": "curation-over-volume",
-    "content": "For LoRA training, 90 curated samples significantly outperform 1,623 raw samples. Curation > volume.",
-    "entities": ["project/mm-kmd"],
+    "content": "For training data, 90 curated samples significantly outperform 1,623 raw samples. Curation > volume.",
+    "entities": ["project/my-app"],
     "confidence": 0.90
   },
   {
     "type": "ActionItem",
-    "slug": "send-peter-5act-proposal",
-    "content": "Send Peter the 5-act structure proposal",
+    "slug": "send-alice-5module-proposal",
+    "content": "Send Alice the 5-module structure proposal",
     "assignee": "Paul",
     "due": "2026-03-25",
-    "entities": ["person/peter", "project/mm-kmd"],
+    "entities": ["person/alice", "project/my-app"],
     "confidence": 0.85
   }
 ]

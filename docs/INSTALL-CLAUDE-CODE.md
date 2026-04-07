@@ -1,6 +1,6 @@
 # Installing Palinode with Claude Code
 
-Palinode gives Claude Code persistent memory via MCP — 17 tools for searching, saving, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
+Palinode gives Claude Code persistent memory via MCP — 18 tools for searching, saving, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
 
 ## Prerequisites
 
@@ -196,7 +196,7 @@ The MCP endpoint is `http://your-server:6341/mcp`. Configure your IDE:
 }
 ```
 
-**Antigravity** — add via the MCP configuration UI with URL `http://your-server:6341/mcp`.
+**Other IDEs** — any MCP-compatible IDE can connect using the URL `http://your-server:6341/mcp`.
 
 ### Network Access
 
@@ -332,7 +332,7 @@ Search palinode for context on this project before we begin
 
 **Register triggers for recurring topics:**
 ```
-Register a palinode trigger: when we discuss LoRA training, surface insights/curation-over-volume.md
+Register a palinode trigger: when we discuss training data, surface insights/curation-over-volume.md
 ```
 
 **After a long session:**

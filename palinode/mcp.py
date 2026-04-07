@@ -215,7 +215,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "source": {
                         "type": "string",
-                        "description": "Source surface that created this memory (e.g., 'claude-code', 'antigravity', 'roo-code', 'openclaw-attractor'). Auto-detected if omitted.",
+                        "description": "Source surface that created this memory (e.g., 'claude-code', 'cursor', 'api'). Auto-detected if omitted.",
                     },
                 },
                 "required": ["content", "type"],
@@ -315,7 +315,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "file": {
                         "type": "string",
-                        "description": "Memory file path (e.g., 'projects/mm-kmd.md')",
+                        "description": "Memory file path (e.g., 'projects/my-app.md')",
                     },
                     "search": {
                         "type": "string",
@@ -336,7 +336,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "file": {
                         "type": "string",
-                        "description": "Memory file path (e.g., 'projects/mm-kmd.md')",
+                        "description": "Memory file path (e.g., 'projects/my-app.md')",
                     },
                     "limit": {
                         "type": "integer",
@@ -395,7 +395,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "description": {
                         "type": "string",
-                        "description": "For 'create': What context should fire this trigger (e.g., 'User is configuring LoRA')",
+                        "description": "For 'create': What context should fire this trigger (e.g., 'User is discussing deployment')",
                     },
                     "memory_file": {
                         "type": "string",
@@ -439,7 +439,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "source": {
                         "type": "string",
-                        "description": "Source surface that created this memory (e.g., 'claude-code', 'antigravity', 'roo-code', 'openclaw-attractor'). Auto-detected if omitted.",
+                        "description": "Source surface that created this memory (e.g., 'claude-code', 'cursor', 'api'). Auto-detected if omitted.",
                     },
                 },
                 "required": ["summary"],

@@ -245,7 +245,7 @@ const palinodePlugin = {
           entities: Type.Optional(
             Type.Array(Type.String(), {
               description:
-                'Related entities, e.g. ["person/peter", "project/mm-kmd"]',
+                'Related entities, e.g. ["person/alice", "project/my-app"]',
             }),
           ),
           slug: Type.Optional(

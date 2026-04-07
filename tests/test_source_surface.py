@@ -27,14 +27,14 @@ def test_save_includes_source_in_frontmatter(mock_memory_dir):
         res = client.post("/save", json={
             "content": "Test memory",
             "type": "Insight",
-            "source": "antigravity"
+            "source": "cursor"
         })
         assert res.status_code == 200
         file_path = res.json()["file_path"]
         
         with open(file_path, "r") as f:
             content = f.read()
-        assert "source: antigravity" in content
+        assert "source: cursor" in content
 
 def test_save_defaults_source_to_api(mock_memory_dir):
     """API saves without explicit source should default to 'api'."""

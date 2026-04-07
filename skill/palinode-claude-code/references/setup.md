@@ -177,7 +177,7 @@ Search palinode for context on this project before we begin
 
 **Register triggers for recurring topics:**
 ```
-Register an palinode trigger: when we discuss LoRA training, surface insights/curation-over-volume.md
+Register a palinode trigger: when we discuss training data, surface insights/curation-over-volume.md
 ```
 
 **After a long session:**

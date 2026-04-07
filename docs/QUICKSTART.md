@@ -66,18 +66,18 @@ python3 -m palinode.indexer.watcher
 Write a markdown file anywhere in the palinode directory:
 
 ```bash
-cat > people/peter.md << 'EOF'
+cat > people/alice.md << 'EOF'
 ---
-id: person-peter
+id: person-alice
 category: person
-name: Peter
+name: Alice
 core: true
-entities: [project/mm-kmd]
+entities: [project/my-app]
 last_updated: 2026-03-22T20:00:00Z
 ---
-# Peter
+# Alice
 
-Writer and IP creator for MM-KMD. Controls canon.
+Designer and product lead for My App. Controls the design system.
 EOF
 ```
 
@@ -89,10 +89,10 @@ The watcher auto-indexes it within ~10 seconds.
 curl -X POST http://localhost:6340/save \
   -H "Content-Type: application/json" \
   -d '{
-    "content": "Peter wants 5 acts instead of 3",
+    "content": "Alice wants 5 modules instead of 3",
     "type": "Decision",
-    "slug": "kmd-five-acts",
-    "entities": ["person/peter", "project/mm-kmd"]
+    "slug": "app-five-modules",
+    "entities": ["person/alice", "project/my-app"]
   }'
 ```
 

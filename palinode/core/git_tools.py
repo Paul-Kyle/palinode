@@ -110,7 +110,7 @@ def blame(file_path: str, search: str | None = None) -> str:
         [git: 2026-04-06, origin: 2026-04-06, source: consolidation] content...
 
     Args:
-        file_path: Relative path within the data repo (e.g., 'projects/mm-kmd.md').
+        file_path: Relative path within the data repo (e.g., 'projects/my-app.md').
         search: Optional search term to filter lines.
 
     Returns:
