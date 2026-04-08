@@ -8,7 +8,7 @@ Usage:
     python -m palinode.migration.mem0_export
 
 Output:
-    ~/clawd/palinode/migration/mem0_export.json
+    {PALINODE_DIR}/migration/mem0_export.json
 """
 from __future__ import annotations
 
@@ -24,7 +24,10 @@ from palinode.core.config import config
 logger = logging.getLogger("palinode.migration.mem0_export")
 
 QDRANT_URL = "http://localhost:6333"
-COLLECTIONS = ["mem0_attractor", "mem0_governor", "mem0_gradient"]
+COLLECTIONS = os.environ.get(
+    "PALINODE_MEM0_COLLECTIONS",
+    "mem0_default"
+).split(",")
 BATCH_SIZE = 100  # Qdrant scroll batch size
 
 
@@ -92,7 +95,7 @@ def _scroll_collection(collection: str) -> list[dict]:
                 "created_at": payload.get("createdAt", ""),
                 "hash": payload.get("hash", ""),
                 "session_type": payload.get("session_type", ""),
-                "user_id": payload.get("userId", "clawd"),
+                "user_id": payload.get("userId", "default"),
             })
 
         offset = result.get("next_page_offset")

@@ -11,14 +11,14 @@ Usage:
     python -m palinode.migration.mem0_classify
 
 Input:
-    ~/clawd/palinode/migration/mem0_export.json
+    {PALINODE_DIR}/migration/mem0_export.json
 
 Output:
-    ~/clawd/palinode/migration/mem0_classified.json
+    {PALINODE_DIR}/migration/mem0_classified.json
 
 LLM Config:
-    URL: http://localhost:8080/v1 (Mac Studio Qwen 72B)
-    Model: /path/to/models/qwen25-72b-abliterated-mlx
+    URL: PALINODE_CLASSIFY_LLM_URL (default: http://localhost:8080)
+    Model: PALINODE_CLASSIFY_LLM_MODEL (any OpenAI-compatible chat model)
 """
 from __future__ import annotations
 
@@ -113,17 +113,17 @@ Given a batch of raw memory snippets, classify each one:
    - Config: system configuration or technical setup detail
    - Skip: not worth keeping (too vague, trivially obvious, or stale operational detail)
 
-2. **entities**: Array of entity references, e.g. ["person/paul", "project/mm-kmd"]
-   Known entities: person/paul, person/peter, person/aidan, project/mm-kmd, project/palinode, project/color-class, project/infrastructure
+2. **entities**: Array of entity references, e.g. ["person/alice", "project/my-app"]
+   Detect entities from the content. Use the pattern: person/{name}, project/{slug}.
 
 3. **group**: A short slug for grouping related memories into the same file.
    Related memories about the same topic should share a group slug.
-   Examples: "mm-kmd-lora-training", "paul-preferences", "infrastructure-vllm"
+   Examples: "my-app-milestones", "alice-preferences", "infrastructure-setup"
 
 Return a JSON array with one object per memory:
 ```json
 [
-  {"index": 0, "type": "ProjectSnapshot", "entities": ["project/mm-kmd"], "group": "mm-kmd-milestones"},
+  {"index": 0, "type": "ProjectSnapshot", "entities": ["project/my-app"], "group": "my-app-milestones"},
   {"index": 1, "type": "Skip", "entities": [], "group": ""},
   ...
 ]

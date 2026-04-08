@@ -13,7 +13,7 @@ Reply to: https://x.com/karpathy/status/2039805659525644595
 
 I've been building exactly this.
 
-Palinode: git-versioned markdown memory for AI agents. Hybrid BM25+vector search. 17 MCP tools. Deterministic compaction.
+Palinode: git-versioned markdown memory for AI agents. Hybrid BM25+vector search. 18 MCP tools. Deterministic compaction.
 
 The part I added? git blame on every fact your agent knows.
 
@@ -40,7 +40,7 @@ Same philosophy. With provenance.
 
 **Tweet 4 (with status screenshot):**
 
-227 files. 2,230 chunks indexed. 56 tests. 17 MCP tools. No cloud. No external DB. SQLite-vec + FTS5 + BGE-M3.
+227 files. 2,230 chunks indexed. 92 tests. 18 MCP tools. No cloud. No external DB. SQLite-vec + FTS5 + BGE-M3.
 
 Runs on a single box. MIT license.
 
@@ -48,31 +48,27 @@ github.com/Paul-Kyle/palinode
 
 ---
 
-## Show HN (Monday ~8am ET / 5am PT)
+## Show HN (Wednesday ~9am PT)
 
 **Title:**
-Show HN: Palinode – Persistent agent memory as plain markdown with git provenance
+Show HN: Palinode – Git-versioned markdown memory for AI agents
 
-**Body:**
-Palinode is persistent memory for AI agents. Your agent's memory is a folder of markdown files — typed (people, projects, decisions, insights), git-versioned, and searchable with hybrid BM25 + vector.
+**Body (post as first comment):**
+I was using Mem0 for agent memory and found myself SSHing into a box to grep Qdrant vectors trying to figure out when my agent learned something wrong. I wanted `git blame` for agent memory. So I built it.
 
-The architecture is simple: markdown files are truth, SQLite (vec + FTS5) is a derived index, and every interface (MCP, REST API, CLI, agent plugin) hits the same backend. Set up on a server, connect from any IDE on any machine.
+Palinode stores your agent's memory as typed markdown files (people, projects, decisions, insights) with YAML frontmatter. A file watcher indexes them into SQLite-vec + FTS5 for hybrid search. Weekly, an LLM proposes structured compaction ops (KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE) and a deterministic executor applies them — the LLM never writes files directly. Every compaction is a git commit.
 
-What made me build this:
+The part I think is actually new: diff, blame, rollback, and push are MCP tools your agent can call. Not just git-compatible files — the agent can trace any fact back to the session that recorded it, or revert a bad compaction, without you touching a terminal.
 
-I was using Mem0, then found myself grepping the Qdrant vectors trying to figure out when my agent learned something wrong. I wanted `git blame` for agent memory. So I built it.
+Architecture is dumb on purpose. Markdown files are truth. SQLite is a derived index. If everything crashes, `cat` still works. One API server, one .db file, one directory.
 
-What's different:
+It runs on a homelab box. I connect from two laptops over Tailscale. The MCP server is a pure HTTP client with no state — works with Claude Code, Cursor, Zed, anything that speaks MCP. Same 18 tools are also available as a REST API and CLI.
 
-- **Files are truth** — if every service crashes, `cat` still works. Rebuild the index anytime.
-- **Git operations as agent tools** — diff, blame, rollback, push are callable MCP tools, not just CLI conveniences.
-- **Deterministic compaction** — an LLM proposes structured ops (KEEP/UPDATE/MERGE/SUPERSEDE/ARCHIVE), a deterministic executor applies them and commits. The LLM never writes files directly.
-- **One backend, every interface** — MCP server (Streamable HTTP or stdio), REST API, CLI, OpenClaw plugin. Same 18 tools everywhere. Connect Claude Code, Zed, Cursor, Claude Desktop, or your own scripts.
-- **No infrastructure** — SQLite-vec + FTS5 + Ollama. No Postgres, no Redis, no cloud. One directory, one .db file, one API server.
+Karpathy's knowledge-base gist (https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) articulated a lot of what I was already building toward — particularly the raw/compiled split, which maps directly to Palinode's ingest/consolidate cycle. This is one working implementation of those ideas.
 
-Stack: Python 3.11+, BGE-M3 embeddings via Ollama, any chat model for consolidation. 56 tests. MIT.
+What it doesn't do: no auto-injection into arbitrary LLM calls (you need an MCP client or to call the API). No multi-user. No cloud hosted version. It's a personal tool for one human and their agents.
 
-I run it on a homelab box and connect from two laptops over Tailscale. The MCP server is a pure HTTP client — it holds no state, just proxies to the API.
+Python 3.11+, BGE-M3 via Ollama, any chat model for consolidation. 92 tests. MIT.
 
 https://github.com/Paul-Kyle/palinode
 
@@ -100,7 +96,7 @@ It works from any IDE — the MCP server runs over Streamable HTTP, so Claude Co
 
 Browse your agent's brain in Obsidian. If Ollama dies, cat and grep still work.
 
-18 tools, 56 tests, MIT: https://github.com/Paul-Kyle/palinode
+18 tools, 92 tests, MIT: https://github.com/Paul-Kyle/palinode
 
 ---
 
@@ -116,6 +112,6 @@ The architecture: markdown files → SQLite-vec + FTS5 hybrid index → 4-phase 
 
 The design bet: files are the source of truth, everything else is a derived index. One backend, multiple interfaces (MCP server over Streamable HTTP, REST API, CLI, OpenClaw plugin). 18 tools work identically across Claude Code, Zed, Cursor, or shell scripts.
 
-Behavioral spec in PROGRAM.md. 56 tests. MIT.
+Behavioral spec in PROGRAM.md. 92 tests. MIT.
 
 https://github.com/Paul-Kyle/palinode

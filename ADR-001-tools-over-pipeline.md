@@ -6,7 +6,7 @@
 
 ## Decision
 
-Palinode's primary value is its **17 MCP tools + file-based storage + git versioning**, not its 4-phase injection pipeline. The pipeline is scaffolding for current models. The tools survive any model upgrade.
+Palinode's primary value is its **18 MCP tools + file-based storage + git versioning**, not its 4-phase injection pipeline. The pipeline is scaffolding for current models. The tools survive any model upgrade.
 
 ## Context
 

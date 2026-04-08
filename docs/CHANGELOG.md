@@ -7,7 +7,7 @@
   - Commands: search, save, status, diff, consolidate, trigger, doctor
   - TTY-aware output (human text vs piped JSON)
   - Remote access via `PALINODE_API` env var or SSH
-- **GPU usage plane spec** — VRAM budget for embeddings + transcription + general LLM
+- **GPU usage plane spec** — memory budget for embeddings + transcription + general LLM
 - **Architecture decision: CLI vs MCP** — CLI for agents/scripts/cron (8x fewer tokens), MCP for IDEs only
 - Updated README architecture diagram to show CLI path
 - Updated ROADMAP with Phase 1.25 (CLI + interface rationalization)
