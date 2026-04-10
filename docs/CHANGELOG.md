@@ -1,79 +1,106 @@
 # Changelog
 
-## [Unreleased]
+All notable changes to Palinode. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.5.0] — 2026-04-10
+
+First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and LLM-driven consolidation applied by a deterministic executor.
 
 ### Added
-- **CLI wrapper spec** (`specs/palinode-cli-spec.md`) — full `palinode` CLI wrapping REST API via Click
-  - Commands: search, save, status, diff, consolidate, trigger, doctor
-  - TTY-aware output (human text vs piped JSON)
-  - Remote access via `PALINODE_API` env var or SSH
-- **GPU usage plane spec** — memory budget for embeddings + transcription + general LLM
-- **Architecture decision: CLI vs MCP** — CLI for agents/scripts/cron (8x fewer tokens), MCP for IDEs only
-- Updated README architecture diagram to show CLI path
-- Updated ROADMAP with Phase 1.25 (CLI + interface rationalization)
-- Updated FEATURE-STATUS with CLI entry
-- `palinode read` command — read memory files with optional `--meta` frontmatter parsing
-- `palinode session-end` command — capture session outcomes to daily notes + project status
+
+**Core storage and search**
+- SQLite-vec vector store with BGE-M3 embeddings (1024d) via any OpenAI-compatible endpoint (Ollama, vLLM, etc.)
+- Hybrid search: vector similarity + BM25 (FTS5) fused via reciprocal rank fusion
+- Hash-on-read freshness validation — detects out-of-band file edits without a full reindex
+- File watcher daemon with debounced reindex and fault isolation
+
+**Consolidation and compaction**
+- Deterministic executor applying `KEEP` / `UPDATE` / `MERGE` / `SUPERSEDE` / `ARCHIVE` operations proposed by an LLM (see [ADR-001](../ADR-001-tools-over-pipeline.md))
+- Weekly full-corpus consolidation with configurable LLM backend
+- Nightly lightweight consolidation pass (`--nightly` flag) bounded to `UPDATE`/`SUPERSEDE` for safer incremental updates
+- Model fallback chains — primary → fallback → fallback on timeout or HTTP error
+- Prompt versioning system — extraction/compaction prompts stored as memory files with `active: true` frontmatter
+
+**Interfaces (all four expose the same capabilities)**
+- **MCP server** — Streamable HTTP transport (also supports stdio) with 18 tools. Stateless HTTP client, point it at any Palinode API server
+- **REST API** — FastAPI on port 6340, 20+ endpoints covering search, save, diff, triggers, history, blame, rollback, consolidation, session-end, lint, migrate
+- **CLI** — 26 commands wrapping the REST API via Click. TTY-aware (human output interactive, JSON when piped). Remote access via `PALINODE_API` env var
+- **Plugin** — OpenClaw lifecycle hooks for agent frameworks with inject/extract patterns
+
+**New MCP tools in this release**
+- `palinode_lint` — scan memory for orphaned files, stale active files, missing frontmatter, potential contradictions
+- `palinode_blame` / `palinode_history` / `palinode_timeline` / `palinode_rollback` — git-backed provenance tools
+- `palinode_trigger` — register prospective triggers that inject memory files when matching context is detected
+- `palinode_prompt` — list, read, and activate versioned LLM prompt files
+
+**Capture and session management**
+- `/session-end` endpoint — appends session summary to daily notes + one-liner to project status files
+- Session-end hook for Claude Code — auto-captures sessions on exit, idempotent, non-blocking
+- Entity extraction from daily notes with keyword fallback for untagged content
+
+**Migration**
+- `palinode migrate` — import existing markdown memory systems (OpenClaw format) with `--review` mode for dry-run inspection
+
+**Security and hardening**
+- Path validation on all file operations (rejects `..`, symlinks outside memory directory)
+- Secret scrubbing on save path via configurable regex patterns
+- Exclude-paths list prevents search results from surfacing files in `.secrets`, `credentials`, etc.
+
+**Documentation**
+- [ADR-001: Tools Over Pipeline](../ADR-001-tools-over-pipeline.md) — why the executor is deterministic
+- Remote MCP setup guides for Claude Code, Claude Desktop, Cursor, Zed
+- Example memory files (`examples/people/`, `examples/projects/`, `examples/decisions/`, `examples/insights/`)
+- Compaction walkthrough (`examples/compaction-demo/`) — a memory file across 3 passes with blame + diff output
+
+**Tests**
+- 92 tests covering parser, store, executor, API, CLI, migration, and hybrid search
 
 ### Changed
-- Removed Gemini API key from systemd service files — all inference uses local Ollama
+- All inference is local by default. Cloud API keys (Gemini, OpenAI) are opt-in via environment variables
+- REST API binds to `127.0.0.1` by default; set `PALINODE_API_HOST=0.0.0.0` to expose on LAN
+- FastAPI uses lifespan protocol (deprecated `on_event` removed)
+- Git commits stage only `*.md` files, never the SQLite journal/WAL/SHM
 
-### Infrastructure
-- Configured Palinode MCP for Claude Desktop, Claude Code, Cursor, Zed
+### Fixed
+- Watcher no longer crashes the API server if the memory directory is temporarily unavailable
+- CLI display keys match API response keys across all commands
+- Migration tool correctly handles frontmatter with embedded colons
+
+### Removed
+- Deprecated SSE MCP transport (replaced by Streamable HTTP per canonical MCP SDK pattern)
+
+---
 
 ## [0.1.0] — 2026-03-22
 
-### 🎉 MVP Launch
+Initial public release. Minimum viable memory system.
 
-**Palinode is live.** Persistent memory that makes AI agents smarter over time.
+### What worked at launch
 
-### What's Working
+- SQLite-vec vector store with BGE-M3 embeddings via Ollama
+- File watcher daemon auto-indexing markdown on create/modify/delete
+- FastAPI server with `/search`, `/save`, `/status`, `/reindex` endpoints
+- Markdown parser with YAML frontmatter extraction and heading-level section chunking
+- CLI with `search` and `stats` commands
+- Plugin with core memory injection, topic-specific retrieval, and three tools (`palinode_search`, `palinode_save`, `palinode_status`)
+- Session capture to daily notes on agent end
+- Systemd user services for `palinode-api` (port 6340) and `palinode-watcher`
 
-**Python Core (palinode/)**
-- SQLite-vec vector store with BGE-M3 embeddings (1024d, via Ollama)
-- File watcher daemon — auto-indexes markdown files on create/modify/delete
-- FastAPI server — `/search`, `/save`, `/status`, `/reindex` endpoints
-- Markdown parser — YAML frontmatter extraction + heading-level section chunking
-- CLI — `search` and `stats` commands
-
-**OpenClaw Plugin (plugin/)**
-- Core memory injection at session start (Phase 1: `core: true` files)
-- Topic-specific context retrieval (Phase 2: vector search on first message)
-- Three tools: `palinode_search`, `palinode_save`, `palinode_status`
-- Session capture to daily notes on `agent_end`
-- Reads extraction prompts from `specs/prompts/*.md` (not hardcoded)
-- Reads `PROGRAM.md` for behavioral policy at runtime
-- Runs alongside Mem0 without conflict
-
-**Infrastructure**
-- Systemd user services: `palinode-api` (port 6340) + `palinode-watcher`
-- Enabled for boot survival
-- Graceful degradation: Ollama down → files still readable; DB down → grep still works
-
-### Architecture Decisions
+### Architecture decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Source of truth | Markdown files, git-versioned | Human-readable, survives everything |
 | Vector store | SQLite-vec (embedded) | No server, matches file-based philosophy |
-| Embeddings (core) | BGE-M3 via Ollama | Local, private, top-tier for structured text |
-| Embeddings (future) | gemini-embedding-2-preview | Multimodal, Matryoshka dims, for research ingestion |
-| OpenClaw integration | General plugin (not memory slot) | Runs alongside Mem0 during transition |
-| Prompts | Read from specs/prompts/*.md files | Version-controlled, editable, diffable |
+| Embeddings | BGE-M3 via Ollama | Local, private, strong on structured text |
+| Prompts | Read from `specs/prompts/*.md` | Version-controlled, editable, diffable |
 
-### Known Limitations
+### Known limitations at 0.1.0
 
-- Research docs not indexed yet (large files)
 - No WAL mode on SQLite — concurrent writes can lock
-- `agent_end` capture writes raw session text to daily/ — no LLM extraction yet (needs `api.llm` or external call)
-- No consolidation cron yet (Phase 2)
-- No entity linking yet (Phase 2)
+- Session capture wrote raw text to daily notes (no LLM extraction)
+- No consolidation scheduler
+- No entity linking
+- No MCP server (plugin-only integration)
 
-### What's Next
-
-See `PLAN.md` for the full roadmap:
-- Phase 0.5: Capture expansion (Slack, Telegram, MBP watch folder, ingestion pipeline)
-- Phase 1: Core memory files + retire MEMORY.md
-- Phase 2: Weekly consolidation + entity linking + insights extraction
-- Phase 3: Backfill from Mem0 (2,632 memories) + QC MCP (14K contexts)
-- Phase 4: MCP server for cross-tool access
+All of these are addressed in 0.5.0.

@@ -1,0 +1,108 @@
+$ palinode blame projects/my-app-status.md
+
+# Every remaining line traced back to the commit and session that originated it.
+# This is the "git your agent's brain" pitch made concrete — you can always ask
+# "when did we first record this fact, and what session was I in?"
+
+File: projects/my-app-status.md (after pass 2)
+Commits touching this file: 27 across 3 weeks
+
+Line  1: --- (frontmatter opener)
+Line  2: id: project-my-app-status
+         └─ 2026-03-08  c3a7f1e  session: "Kicked off checkout redesign"         alice
+Line  3: category: project-status
+         └─ 2026-03-08  c3a7f1e  session: "Kicked off checkout redesign"         alice
+Line  4: entities: [project/my-app, person/alice, person/bob]
+         └─ 2026-03-08  c3a7f1e  session: "Kicked off checkout redesign"         alice
+         └─ 2026-03-09  d8e2a14  session: "Stack decision: React Native"         bob
+           (person/bob added when Bob joined the track)
+Line  5: last_updated: 2026-03-29
+         └─ 2026-03-29  4f1c923  session: "[nightly-compaction]"                 system
+Line  6: consolidation_passes: 2
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+
+## Current Work
+
+Line 10: - [2026-03-09] Stack: React Native (Expo); Bob has 2y Expo experience.
+         └─ 2026-03-08  c3a7f1e  session: "Kicked off checkout redesign"         alice
+           (original: "Kicked off checkout redesign. Stack TBD")
+         └─ 2026-03-09  d8e2a14  session: "Stack decision: React Native"         bob
+           (merged as f-0309-1m on 2026-03-30)
+
+Line 11: - [2026-03-15] **Decision: REST over GraphQL** for checkout API. ...
+         └─ 2026-03-10  7a8b4e2  session: "API layer design kickoff"             alice
+           (original: "Considering GraphQL for flexibility")
+         └─ 2026-03-11  e5c9d01  session: "Apollo spike"                         bob
+           (original: "GraphQL exploration ongoing")
+         └─ 2026-03-12  2f3a6cb  session: "Reconsidering REST"                   alice
+           (original: "Actually, leaning REST now")
+         └─ 2026-03-13  9d4e8f7  session: "tRPC spike"                           bob
+           (original: "Tried tRPC in a spike")
+         └─ 2026-03-15  f12b3a8  session: "Architecture review"                  alice
+           (canonical decision recorded)
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (merged 5 lines into f-0315-1m with full decision rationale)
+
+Line 12: - [2026-03-18] Stripe integration complete. Webhook signing uses raw body middleware.
+         └─ 2026-03-16  6c8e1a3  session: "Stripe SDK kickoff"                   alice
+         └─ 2026-03-17  81d2f09  session: "Blocked on webhook signing"           alice
+         └─ 2026-03-18  ae4b792  session: "Webhook signing resolved"             bob
+         └─ 2026-03-19  3c7d0e5  session: "First E2E checkout"                   alice
+         └─ 2026-03-24  d9b1a6f  session: "Stripe re-verification"               alice
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (merged 6 lines into f-0318-1m)
+
+Line 13: - [2026-03-20] QA edge cases found: expired cards, 3DS, address mismatch.
+         └─ 2026-03-20  5e9f2c4  session: "QA pass 1"                            bob
+           (original: "QA caught three edge cases")
+         └─ 2026-03-29  4f1c923  session: "[nightly-compaction]"                 system
+           (UPDATE: enumerated for clarity)
+
+Line 14: - [2026-03-21] Expired card handling: fixed.
+         └─ 2026-03-21  1b4c7e9  session: "Fix: expired card flow"               alice
+
+Line 15: - [2026-03-22] 3DS flow: added, needs more testing.
+         └─ 2026-03-22  8a2d6b0  session: "3DS integration"                      bob
+         └─ 2026-03-29  4f1c923  session: "[nightly-compaction]"                 system
+           (UPDATE: tightened wording)
+
+Line 16: - [2026-03-23] Address mismatch: deferred to post-launch.
+         └─ 2026-03-23  f0e4a1d  session: "Scope cut: address mismatch"          alice
+
+Line 17: - [2026-03-25] QA pass 1 complete.
+         └─ 2026-03-25  c6b3f82  session: "QA pass 1 wrap"                       bob
+           (original: "QA pass 1 complete. 2 blockers remaining")
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (UPDATE: blockers were resolved, removed the tail)
+
+Line 18: - [2026-03-27] Launch blockers resolved: cart persistence (iOS), Apple Pay sheet dismissal (iOS 17).
+         └─ 2026-03-26  9e7a2d4  session: "Fix: cart persistence"                bob
+         └─ 2026-03-27  4c1b6f8  session: "Fix: Apple Pay sheet dismiss"         alice
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (merged 2 lines into f-0327-1m)
+
+Line 19: - [2026-03-28] Apple Pay confirmed as launch requirement (per Alice 2026-03-18).
+         └─ 2026-03-27  7d8e3a2  session: "Apple Pay scope question"             bob
+           (original: "Apple Pay was supposed to be post-launch. Why is it a blocker?")
+         └─ 2026-03-28  2a9f4e1  session: "Apple Pay clarification"              alice
+           (original: "Clarified: Apple Pay is a launch requirement")
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (merged 2 lines into f-0328-1m)
+
+Line 20: - [2026-03-28] **Launch target: 2026-04-15. On track.**
+         └─ 2026-03-28  e5f8c3b  session: "Launch status check"                  alice
+         └─ 2026-03-30  b7e6508  session: "[weekly-compaction]"                  system
+           (UPDATE: emphasized as headline status)
+
+## Summary
+
+11 visible lines.
+Originally written by 27 different sessions between 2026-03-08 and 2026-03-28.
+Touched by 2 compaction passes (nightly + weekly) between 2026-03-29 and 2026-03-30.
+5 lines are MERGEs synthesizing 2-6 original lines each.
+Every original line is still accessible via `palinode history` or via git:
+  $ git log --all --follow projects/my-app-status.md
+  $ palinode history projects/my-app-status.md
+
+No information was deleted. Superseded entries live in:
+  archive/2026/my-app-status.md  (5 entries)

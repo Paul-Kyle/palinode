@@ -1,0 +1,91 @@
+$ palinode diff --days 21 projects/my-app-status.md
+
+# The journey from pass 0 to pass 2 as a single readable diff.
+# This is what `palinode diff` shows when you ask "what changed in this file
+# over the last 3 weeks?" — it collapses all intermediate states into the
+# net effect, with attribution to compaction passes where applicable.
+
+diff --git a/projects/my-app-status.md b/projects/my-app-status.md
+commit range: c3a7f1e..b7e6508 (27 commits, 2026-03-08 → 2026-03-30)
+
+--- a/projects/my-app-status.md (first version, 2026-03-08)
++++ b/projects/my-app-status.md (current, 2026-03-30, after pass 2)
+@@ -1,6 +1,7 @@
+ ---
+ id: project-my-app-status
+ category: project-status
+-entities: [project/my-app, person/alice]
++entities: [project/my-app, person/alice, person/bob]
+-last_updated: 2026-03-08
++last_updated: 2026-03-29
++consolidation_passes: 2
+ ---
+
+@@ -8,26 +9,13 @@
+
+ ## Current Work
+
+-- [2026-03-08] Kicked off checkout redesign. Stack TBD.                          [c3a7f1e session: alice]
+-- [2026-03-09] Decided on React Native. Bob has Expo experience.                 [d8e2a14 session: bob]
++- [2026-03-09] Stack: React Native (Expo); Bob has 2y Expo experience.           [b7e6508 MERGE weekly-compaction]
+-- [2026-03-10] Starting API layer design. Considering GraphQL for flexibility.   [7a8b4e2 session: alice]
+-- [2026-03-11] GraphQL exploration ongoing. Apollo Server looks promising.       [e5c9d01 session: bob]
+-- [2026-03-12] Actually, leaning REST now. Stripe webhooks are REST-native.      [2f3a6cb session: alice]
+-- [2026-03-13] Tried tRPC in a spike — nice DX but Python service plans rule... [9d4e8f7 session: bob]
+-- [2026-03-15] Decision: REST over GraphQL. Documented in decisions/api-design.md. [f12b3a8 session: alice]
++- [2026-03-15] **Decision: REST over GraphQL** for checkout API. See `decisions/api-design.md`.
++  Rationale: Stripe webhooks are REST-native; tRPC ruled out by Python service plans;
++  GraphQL flexibility wasn't needed.                                              [b7e6508 MERGE weekly-compaction]
+-- [2026-03-16] Started Stripe SDK integration. Alice's track.                    [6c8e1a3 session: alice]
+-- [2026-03-17] Stripe integration blocked on webhook signing. Waiting on Bob.    [81d2f09 session: alice]
+-- [2026-03-18] Webhook signing resolved — using raw body middleware.             [ae4b792 session: bob]
+-- [2026-03-19] First end-to-end checkout succeeded in dev.                       [3c7d0e5 session: alice]
+-- [2026-03-24] Stripe integration complete. All tests passing.                   [d9b1a6f session: alice]
+-- [2026-03-24] Actually, Stripe was already done on the 18th. Just re-verified.  [d9b1a6f session: alice]
++- [2026-03-18] Stripe integration complete. Webhook signing uses raw body middleware.
++                                                                                  [b7e6508 MERGE weekly-compaction]
+-- [2026-03-20] QA caught three edge cases: expired cards, 3DS, address mismatch. [5e9f2c4 session: bob]
++- [2026-03-20] QA edge cases found: expired cards, 3DS, address mismatch.        [4f1c923 UPDATE nightly-compaction]
+ - [2026-03-21] Expired card handling fixed.                                      [1b4c7e9 session: alice]
+-- [2026-03-22] 3DS flow added. Need more testing.                                [8a2d6b0 session: bob]
++- [2026-03-22] 3DS flow: added, needs more testing.                              [4f1c923 UPDATE nightly-compaction]
+ - [2026-03-23] Address mismatch deferred to post-launch.                         [f0e4a1d session: alice]
+-- [2026-03-25] QA pass 1 complete. 2 blockers remaining.                         [c6b3f82 session: bob]
++- [2026-03-25] QA pass 1 complete.                                               [b7e6508 UPDATE weekly-compaction]
+-- [2026-03-26] Blocker 1 fixed: cart persistence across app restarts.            [9e7a2d4 session: bob]
+-- [2026-03-27] Blocker 2 fixed: Apple Pay sheet dismissing early on iOS 17.      [4c1b6f8 session: alice]
++- [2026-03-27] Launch blockers resolved: cart persistence (iOS), Apple Pay sheet dismissal (iOS 17).
++                                                                                  [b7e6508 MERGE weekly-compaction]
+-- [2026-03-27] Apple Pay was supposed to be post-launch. Why is it a blocker?    [7d8e3a2 session: bob]
+-- [2026-03-28] Clarified: Apple Pay is a launch requirement per Alice's note...  [2a9f4e1 session: alice]
++- [2026-03-28] Apple Pay confirmed as launch requirement (per Alice 2026-03-18). [b7e6508 MERGE weekly-compaction]
+-- [2026-03-28] Launch target still April 15. On track.                           [e5f8c3b session: alice]
++- [2026-03-28] **Launch target: 2026-04-15. On track.**                          [b7e6508 UPDATE weekly-compaction]
+
+ ## Open Questions
+
+-- Do we need Apple Pay / Google Pay for launch or can it wait?
+ - Error handling UX for declined cards — show inline or modal?
+
+## Summary of changes
+
+ 23 status lines  →  11 status lines      (-12, -52%)
+  0 consolidation passes  →  2 passes     (1 nightly, 1 weekly)
+  0 merged entries        →  5 merges     (spanning 17 original lines)
+  0 archived entries      →  5 archives   (preserved in archive/2026/)
+  2 open questions        →  1 open       (1 resolved, 1 still open)
+
+Commits in range:
+  27 total, 25 from user sessions, 2 from compaction passes
+  Last session commit:       2026-03-28  e5f8c3b  (alice)
+  Last compaction commit:    2026-03-30  b7e6508  (weekly pass)
+
+# To see the full audit trail of any specific line:
+#   $ palinode blame projects/my-app-status.md
+#
+# To see what was archived:
+#   $ cat archive/2026/my-app-status.md
+#
+# To replay a specific compaction pass:
+#   $ git show 4f1c923    # nightly
+#   $ git show b7e6508    # weekly
