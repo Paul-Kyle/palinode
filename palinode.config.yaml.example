@@ -9,7 +9,7 @@
 # -----------------------------------------------------------------------------
 # Where Palinode stores markdown memory files and the SQLite-vec index.
 # All paths below are relative to this directory unless absolute.
-memory_dir: "~/.palinode"
+memory_dir: "~/palinode"
 
 # SQLite-vec database location (relative to memory_dir)
 db_path: ".palinode.db"
@@ -187,25 +187,80 @@ search:
     - "archived"
 
 # -----------------------------------------------------------------------------
-# Consolidation (Phase 2 — not yet implemented)
+# Consolidation
 # -----------------------------------------------------------------------------
+# Three-tier memory freshness:
+#   Tier 1: Session append — free, every session exit (hook or MCP call).
+#           Appends summary to daily/{date}.md + one-liner to projects/{slug}-status.md.
+#   Tier 2: Nightly dedup — lightweight LLM pass over today's notes.
+#           UPDATE/SUPERSEDE only. No restructuring, no archival.
+#   Tier 3: Weekly deep clean — full compaction with MERGE/ARCHIVE.
+#           Restructures status files, archives processed daily notes.
+#
+# HOW TO INSTALL CRON JOBS:
+#   # Nightly — lightweight dedup of today's sessions (Tier 2)
+#   0 11 * * * cd /path/to/palinode && PALINODE_DIR=/path/to/data \
+#     venv/bin/python -m palinode.consolidation.cron --nightly --days 1 \
+#     >> /path/to/data/logs/consolidation.log 2>&1
+#
+#   # Weekly — full compaction (Tier 3)
+#   0 11 * * 0 cd /path/to/palinode && PALINODE_DIR=/path/to/data \
+#     venv/bin/python -m palinode.consolidation.cron --days 3 \
+#     >> /path/to/data/logs/consolidation.log 2>&1
+#
+# TIMING NOTES:
+#   - Times above are UTC. Adjust for your timezone (11:00 UTC = 4am PT).
+#   - Nightly runs daily; weekly runs Sundays. On Sundays both fire —
+#     nightly first (UPDATE/SUPERSEDE), then weekly (full ops). No conflict.
+#   - The `schedule` field below is informational only — actual scheduling
+#     is via crontab, systemd timers, or your preferred scheduler.
+#
 consolidation:
   enabled: true
-  # Cron expression for weekly consolidation
-  schedule: "0 3 * * 0"  # Sunday 3am UTC
-  # How many days of daily notes to process
+  # Informational — actual schedule lives in crontab (see above)
+  schedule: "0 11 * * 0"  # Sunday 4am PT (11:00 UTC)
+  # How many days of daily notes to process (weekly full pass)
   lookback_days: 7
   # Maximum daily files to process per run
   max_files: 30
-  # LLM API for consolidation
-  llm_url: "http://localhost:8000"  # vLLM or other OpenAI-compatible server
-  # llm_model: path to model or model identifier for your LLM backend
+
+  # LLM API for consolidation (any OpenAI-compatible endpoint)
+  llm_url: "http://localhost:8000"  # vLLM, Ollama, etc.
+  # llm_model: model path or identifier for your LLM backend
   # Examples:
-  #   vLLM:  "http://localhost:8000" (set via VLLM_BASE_URL env var instead)
-  #   Ollama: "llama3.1:8b"
+  #   vLLM:   "/model" (default path)
+  #   Ollama: "llama3.1:8b" or "qwen2.5:14b-instruct"
   llm_model: "/model"
   llm_temperature: 0.3
   llm_max_tokens: 2000
+
+  # Nightly pass configuration (Tier 2)
+  nightly:
+    enabled: true
+    # How many days to look back (1 = today only)
+    lookback_days: 1
+    # Restrict to safe, additive operations — no restructuring
+    allowed_ops: ["UPDATE", "SUPERSEDE"]
+
+  # Write-time contradiction check (Tier 2a — ADR-004)
+  # When enabled, every palinode_save schedules a background LLM check against
+  # the top-k most similar existing memories. If a contradiction is found, the
+  # deterministic executor applies an UPDATE/SUPERSEDE op in a separate commit.
+  # Runs asynchronously — never blocks the save caller.
+  #
+  # Default: disabled. Flip to true after validating in a dev environment.
+  # Sync opt-in: set query param ?sync=true on /save or pass --sync to CLI.
+  write_time:
+    enabled: false
+    queue_max_size: 1000
+    check_timeout_seconds: 30
+    pending_dir: ".palinode/pending"
+    sweep_on_startup: true
+
+  # Optional: map project entity refs to keywords for auto-grouping
+  # daily notes that don't contain explicit `project/foo` entity refs.
+  # keyword_map:
+  #   "project/my-app": ["my-app", "MyApp", "the app"]
 
 # -----------------------------------------------------------------------------
 # Compaction

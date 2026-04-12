@@ -263,7 +263,7 @@ Return the operations JSON array."""
     json_match = re.search(r'\[[\s\S]*\]', result_text)
     if json_match:
         try:
-            return json.loads(json_match.group())
+            return json.loads(json_match.group()), model_used
         except json.JSONDecodeError:
             # LLM often outputs malformed JSON — use json_repair
             try:

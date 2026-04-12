@@ -37,12 +37,48 @@ import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 
+import os
+
 from palinode.core.config import config
 
 logger = logging.getLogger("palinode.mcp")
 logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
 
 server = Server("palinode")
+
+
+def _resolve_context() -> list[str] | None:
+    """Resolve ambient project context from environment (ADR-008).
+
+    Resolution order:
+    1. PALINODE_PROJECT env var (explicit entity ref, e.g. "project/palinode")
+    2. CWD basename → config.context.project_map lookup
+    3. CWD basename → auto-detect as project/{basename} (if auto_detect=True)
+    """
+    if not config.context.enabled:
+        return None
+
+    # 1. Explicit env var
+    explicit = os.environ.get("PALINODE_PROJECT")
+    if explicit:
+        return [explicit] if "/" in explicit else [f"project/{explicit}"]
+
+    # 2/3. CWD-based resolution
+    cwd = os.environ.get("CWD") or os.getcwd()
+    basename = os.path.basename(cwd)
+    if not basename:
+        return None
+
+    # Check config map
+    if basename in config.context.project_map:
+        entity = config.context.project_map[basename]
+        return [entity] if "/" in entity else [f"project/{entity}"]
+
+    # Auto-detect
+    if config.context.auto_detect:
+        return [f"project/{basename}"]
+
+    return None
 
 
 # ── HTTP client helpers ──────────────────────────────────────────────────────
@@ -480,6 +516,7 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "For 'list': filter by task type",
                         "enum": ["compaction", "extraction", "update", "classification", "nightly-consolidation"],
+                        "enum": ["compaction", "extraction", "update", "classification"],
                     },
                 },
                 "required": ["action"],
@@ -533,6 +570,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 body["date_before"] = arguments["date_before"]
             # Use MCP threshold, not API default
             body["threshold"] = config.search.mcp_threshold
+            # ADR-008: ambient context boost
+            context = _resolve_context()
+            if context:
+                body["context"] = context
 
             resp = await _post("/search", json=body, timeout=60.0)
             if resp.status_code != 200:
@@ -828,18 +869,23 @@ def main() -> None:
     asyncio.run(async_main())
 
 
-def main_sse() -> None:
-    """Entry point for HTTP transport — palinode-mcp-sse.
+def main_http() -> None:
+    """Entry point for Streamable HTTP transport — palinode-mcp-http.
 
-    Exposes the MCP server over Streamable HTTP so remote clients (Zed, Cursor, etc.)
-    can connect via URL without running a local process.
+    Exposes the MCP server over Streamable HTTP so remote clients (Claude Code,
+    Claude Desktop, Cursor, Zed, etc.) can connect via URL without running a
+    local process.
 
     Env vars:
-      PALINODE_MCP_SSE_HOST  — bind address (default: 0.0.0.0)
-      PALINODE_MCP_SSE_PORT  — bind port (default: 6341)
+      PALINODE_MCP_HTTP_HOST  — bind address (default: 0.0.0.0)
+      PALINODE_MCP_HTTP_PORT  — bind port (default: 6341)
+      PALINODE_MCP_LOG_LEVEL  — uvicorn log level (default: info)
+
+    Legacy env var aliases (still honored for existing deployments):
+      PALINODE_MCP_SSE_HOST, PALINODE_MCP_SSE_PORT
 
     Client config (any IDE):
-      { "url": "http://your-server:6341/mcp" }
+      { "url": "http://your-server:6341/mcp/" }
     """
     import contextlib
     import os
@@ -848,7 +894,8 @@ def main_sse() -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
-    from starlette.routing import Mount
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
 
     session_manager = StreamableHTTPSessionManager(app=server)
 
@@ -857,18 +904,46 @@ def main_sse() -> None:
         async with session_manager.run():
             yield
 
+    async def healthz(request):
+        """Health check — returns 200 if the session manager is running.
+
+        Clients can poll this for connection-liveness detection without
+        initiating a full MCP session.
+        """
+        return JSONResponse({
+            "status": "ok",
+            "service": "palinode-mcp-http",
+            "transport": "streamable-http",
+            "api_backend": _api_url(""),
+        })
+
     starlette_app = Starlette(
         lifespan=lifespan,
         routes=[
+            Route("/healthz", endpoint=healthz, methods=["GET"]),
             Mount("/mcp", app=session_manager.handle_request),
         ],
     )
 
-    host = os.environ.get("PALINODE_MCP_SSE_HOST", "0.0.0.0")
-    port = int(os.environ.get("PALINODE_MCP_SSE_PORT", "6341"))
-    print(f"Palinode MCP (Streamable HTTP) listening on http://{host}:{port}/mcp")
-    print(f"  API backend: {_api_url('')}")
-    uvicorn.run(starlette_app, host=host, port=port, log_level="warning")
+    host = (
+        os.environ.get("PALINODE_MCP_HTTP_HOST")
+        or os.environ.get("PALINODE_MCP_SSE_HOST")  # legacy alias
+        or "0.0.0.0"
+    )
+    port = int(
+        os.environ.get("PALINODE_MCP_HTTP_PORT")
+        or os.environ.get("PALINODE_MCP_SSE_PORT")  # legacy alias
+        or "6341"
+    )
+    log_level = os.environ.get("PALINODE_MCP_LOG_LEVEL", "info")
+    print(f"Palinode MCP (Streamable HTTP) listening on http://{host}:{port}/mcp/")
+    print(f"  Health check: http://{host}:{port}/healthz")
+    print(f"  API backend:  {_api_url('')}")
+    uvicorn.run(starlette_app, host=host, port=port, log_level=log_level)
+
+
+# Legacy alias for existing setuptools console_scripts (palinode-mcp-sse)
+main_sse = main_http
 
 
 if __name__ == "__main__":

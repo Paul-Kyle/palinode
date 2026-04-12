@@ -41,6 +41,7 @@ plugin/dist/
 palinode.egg-info/
 __pycache__/
 *.pyc
+*.cover
 venv/
 
 # Server logs

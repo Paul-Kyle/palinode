@@ -20,7 +20,7 @@ Add this to `~/.claude/claude_desktop_config.json` on your Mac or remote server:
 }
 ```
 
-Or by IP (if hostname doesn't resolve):
+Or by IP (if Tailscale hostname doesn't resolve):
 ```json
 {
   "mcpServers": {
@@ -36,7 +36,7 @@ Or by IP (if hostname doesn't resolve):
 }
 ```
 
-> **Note:** SSH key auth must be set up — passwordless SSH from your Mac to your-server.
+> **Note:** SSH key auth must be set up — passwordless SSH from your Mac to the Palinode server.
 > If not set up: `ssh-copy-id user@your-palinode-server`
 
 ## Available Tools

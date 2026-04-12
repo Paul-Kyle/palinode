@@ -158,6 +158,24 @@ class NightlyConfig:
     allowed_ops: list[str] = field(default_factory=lambda: ["UPDATE", "SUPERSEDE"])
 
 @dataclass
+class WriteTimeConfig:
+    """Tier 2a (ADR-004): write-time contradiction check on palinode_save.
+
+    When enabled, every save schedules a background contradiction check
+    against similar existing memories. The check runs asynchronously
+    (via an asyncio queue in the API server, or disk-backed marker files
+    from CLI/plugin paths) and never blocks the save caller. Errors in
+    the check are logged but never propagate to the save response.
+
+    Default disabled — flip to true after validating in a dev environment.
+    """
+    enabled: bool = False
+    queue_max_size: int = 1000
+    check_timeout_seconds: int = 30
+    pending_dir: str = ".palinode/pending"
+    sweep_on_startup: bool = True
+
+@dataclass
 class ConsolidationConfig:
     """Interval LLM job configuration settings logic."""
     enabled: bool = True
@@ -171,6 +189,7 @@ class ConsolidationConfig:
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
     nightly: NightlyConfig = field(default_factory=NightlyConfig)
+    write_time: WriteTimeConfig = field(default_factory=WriteTimeConfig)
     keyword_map: dict[str, list[str]] | None = None
 
 @dataclass
@@ -254,6 +273,15 @@ class LayerSplitConfig:
 
 
 @dataclass
+class ContextConfig:
+    """Ambient context for search boosting. Resolves caller's project from CWD."""
+    enabled: bool = True
+    boost: float = 1.5              # Multiplier for context-matching results (1.0 = disabled)
+    auto_detect: bool = True        # Fall back to project/{basename(cwd)} if not in project_map
+    project_map: dict[str, str] = field(default_factory=dict)  # CWD basename → entity ref
+    embed_augment: bool = True      # Prepend project context to query before embedding
+
+@dataclass
 class CompactionConfig:
     """Operations controls algorithms parameters logic models layouts mapping endpoints."""
     # Which operations are allowed
@@ -277,6 +305,7 @@ class Config:
     search: SearchConfig = field(default_factory=SearchConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     decay: DecayConfig = field(default_factory=DecayConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)

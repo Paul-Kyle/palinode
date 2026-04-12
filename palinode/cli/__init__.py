@@ -7,7 +7,7 @@ from palinode.cli.diff import diff
 from palinode.cli.consolidate import consolidate
 from palinode.cli.trigger import trigger
 from palinode.cli.doctor import doctor
-from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids, migrate_mem0
+from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids
 from palinode.cli.git import blame, timeline, rollback, push
 from palinode.cli.query import history, entities
 from palinode.cli.session_end import session_end
@@ -16,7 +16,6 @@ from palinode.cli.list import list_cmd
 from palinode.cli.lint import lint
 from palinode.cli.ingest import ingest
 from palinode.cli.prompt import prompt
-from palinode.cli.migrate import migrate
 
 @click.group()
 def main():
@@ -37,7 +36,6 @@ main.add_command(reindex)
 main.add_command(rebuild_fts)
 main.add_command(split_layers)
 main.add_command(bootstrap_ids)
-main.add_command(migrate_mem0)
 
 # Git
 main.add_command(blame)
@@ -52,7 +50,6 @@ main.add_command(read)
 main.add_command(list_cmd, name="list")
 main.add_command(lint)
 main.add_command(ingest)
-main.add_command(migrate)
 
 # Prompts
 main.add_command(prompt)

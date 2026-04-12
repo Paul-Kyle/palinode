@@ -44,20 +44,47 @@ class JsonlFormatter(logging.Formatter):
         })
 
 
+# Attach handlers to the "palinode" parent logger so all palinode.* modules
+# (palinode.api, palinode.write_time, palinode.consolidation, etc.) share them.
+# This ensures unified observability across background workers and request
+# handlers without each module configuring its own handlers.
+_parent_logger = logging.getLogger("palinode")
+_parent_logger.setLevel(getattr(logging, config.services.api.log_level.upper(), logging.INFO))
+
 sh = logging.StreamHandler()
 sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-logger.addHandler(sh)
+_parent_logger.addHandler(sh)
 
 os.makedirs(os.path.join(config.palinode_dir, "logs"), exist_ok=True)
 fh = logging.FileHandler(os.path.join(config.palinode_dir, config.logging.operations_log))
 fh.setFormatter(JsonlFormatter())
-logger.addHandler(fh)
+_parent_logger.addHandler(fh)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
+    """Initialize database and background workers on startup."""
     store.init_db()
+
+    # Tier 2a (ADR-004): write-time contradiction check worker
+    if config.consolidation.write_time.enabled:
+        try:
+            from palinode.consolidation import write_time
+            await write_time.start_worker(app.state)
+        except Exception as e:  # noqa: BLE001
+            # Worker startup failures must never prevent the API from running
+            logger = logging.getLogger("palinode.api")
+            logger.error(f"write-time worker failed to start: {e}")
+
     yield
+
+    # Shutdown: cancel worker task if it was started
+    if config.consolidation.write_time.enabled:
+        try:
+            from palinode.consolidation import write_time
+            await write_time.stop_worker(app.state)
+        except Exception as e:  # noqa: BLE001
+            logger = logging.getLogger("palinode.api")
+            logger.error(f"write-time worker failed to stop cleanly: {e}")
 
 app = FastAPI(title="Palinode API", lifespan=lifespan)
 
@@ -162,6 +189,7 @@ class SearchRequest(BaseModel):
     hybrid: bool | None = None
     date_after: str | None = None
     date_before: str | None = None
+    context: list[str] | None = None  # Entity refs for ambient context boost (ADR-008)
 
 class SearchAssociativeRequest(BaseModel):
     query: str
@@ -286,12 +314,20 @@ def search_api(req: SearchRequest) -> list[dict[str, Any]]:
         list[dict[str, Any]]: List payload sequence matching the criteria boundaries.
     """
     try:
-        query_emb = embedder.embed(req.query)
+        # ADR-008: Augment query with project context before embedding
+        embed_query = req.query
+        if req.context and config.context.enabled and config.context.embed_augment:
+            # Extract project name from entity ref (e.g., "project/palinode" → "palinode")
+            project_names = [e.split("/", 1)[-1] for e in req.context if "/" in e]
+            if project_names:
+                embed_query = f"In the context of {', '.join(project_names)}: {req.query}"
+
+        query_emb = embedder.embed(embed_query)
         if not query_emb:
             return []
-        
+
         use_hybrid = req.hybrid if req.hybrid is not None else config.search.hybrid_enabled
-        
+
         if use_hybrid:
             results = store.search_hybrid(
                 query_text=req.query,
@@ -302,6 +338,7 @@ def search_api(req: SearchRequest) -> list[dict[str, Any]]:
                 hybrid_weight=config.search.hybrid_weight,
                 date_after=req.date_after,
                 date_before=req.date_before,
+                context_entities=req.context,
             )
         else:
             results = store.search(
@@ -388,8 +425,15 @@ def check_triggers_api(req: CheckTriggersRequest) -> list[dict[str, Any]]:
 
 
 @app.post("/save")
-def save_api(req: SaveRequest) -> dict[str, str]:
-    """Persists a new memory instance chunk locally and initiates git backup sequences."""
+def save_api(req: SaveRequest, sync: bool = False) -> dict[str, Any]:
+    """Persists a new memory instance chunk locally and initiates git backup sequences.
+
+    Query params:
+        sync: If True, runs the write-time contradiction check (tier 2a, ADR-004)
+              inline and returns its result. If False (default), the check is
+              enqueued for background processing and the response returns as
+              soon as the file is written and git-committed.
+    """
     slug = req.slug
     if slug:
         # Prevent any potential JSON escape or traversal exploits if user defines slug
@@ -466,7 +510,32 @@ def save_api(req: SaveRequest) -> dict[str, str]:
             logger.error(f"Git auto-commit failed: {e}")
 
     logger.info(f"Saved memory to {file_path}")
-    return {"file_path": file_path, "id": frontmatter_dict["id"]}
+
+    result: dict[str, Any] = {"file_path": file_path, "id": frontmatter_dict["id"]}
+
+    # Tier 2a (ADR-004): schedule write-time contradiction check.
+    # Always safe to call — returns None immediately if disabled in config.
+    # Errors inside the scheduler are logged and swallowed; never propagate.
+    if config.consolidation.write_time.enabled:
+        try:
+            from palinode.consolidation import write_time
+            item = {
+                "content": req.content,
+                "category": category,
+                "type": req.type,
+                "entities": req.entities or [],
+                "id": frontmatter_dict["id"],
+            }
+            check_result = write_time.schedule_contradiction_check(
+                file_path, item, sync=sync
+            )
+            if sync and check_result is not None:
+                result["write_time_check"] = check_result
+        except Exception as e:
+            # Load-bearing: save must never fail because of tier 2a
+            logger.error(f"write-time schedule failed (non-fatal): {e}")
+
+    return result
 
 
 @app.post("/generate-summaries")
@@ -543,6 +612,26 @@ def status_api() -> dict[str, Any]:
         ollama_reachable = False
         
     stats["ollama_reachable"] = ollama_reachable
+
+    # Tier 2a (ADR-004) observability
+    stats["write_time_enabled"] = config.consolidation.write_time.enabled
+    if config.consolidation.write_time.enabled:
+        try:
+            from palinode.consolidation import write_time
+            queue = write_time._queue
+            stats["write_time_queue_depth"] = queue.qsize() if queue else 0
+            pending_dir = write_time._pending_dir()
+            if os.path.isdir(pending_dir):
+                pending = glob.glob(os.path.join(pending_dir, "*.json"))
+                failed = glob.glob(os.path.join(pending_dir, "*.failed.json"))
+                stats["write_time_pending_markers"] = len(pending) - len(failed)
+                stats["write_time_failed_markers"] = len(failed)
+            else:
+                stats["write_time_pending_markers"] = 0
+                stats["write_time_failed_markers"] = 0
+        except Exception as e:
+            logger.warning(f"write-time status lookup failed: {e}")
+
     return stats
 
 
@@ -986,73 +1075,6 @@ def activate_prompt_api(name: str) -> dict[str, Any]:
             logger.warning(f"Git commit for prompt activation failed: {e}")
 
     return {"activated": name, "task": task}
-
-
-class MigrateOpenClawRequest(BaseModel):
-    path: str
-    dry_run: bool = False
-
-
-@app.post("/migrate/openclaw")
-def migrate_openclaw_api(req: MigrateOpenClawRequest) -> dict:
-    """Import a MEMORY.md from OpenClaw into Palinode.
-
-    Parses each ## section into a separate memory file with heuristic
-    type detection (person / decision / project / insight).
-
-    Args:
-        req: Request body with ``path`` (absolute or relative to memory_dir)
-             and optional ``dry_run`` flag.
-
-    Returns:
-        dict with sections_found, files_created, files_skipped, log_file, dry_run.
-    """
-    from palinode.migration.openclaw import run_migration
-
-    path = req.path
-    if "\x00" in path:
-        raise HTTPException(status_code=400, detail="Null bytes are not allowed in path")
-
-    # Resolve against memory_dir; reject paths that escape it.
-    base = _memory_base_dir()
-    if os.path.isabs(path):
-        resolved_path = os.path.realpath(path)
-    else:
-        resolved_path = os.path.realpath(os.path.join(base, path))
-    try:
-        within = os.path.commonpath([base, resolved_path]) == base
-    except ValueError:
-        within = False
-    if not within:
-        raise HTTPException(status_code=403, detail="Path traversal rejected")
-    path = resolved_path
-
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-    try:
-        result = run_migration(source_path=path, dry_run=req.dry_run)
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error(f"OpenClaw migration failed: {exc}")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/migrate/mem0")
-def migrate_mem0_api() -> dict[str, str]:
-    """Run the Mem0 backfill pipeline.
-
-    One-time migration: exports from Qdrant, deduplicates, classifies,
-    and generates Palinode markdown files.
-    """
-    from palinode.migration.run_mem0_backfill import main as run_backfill
-    try:
-        run_backfill()
-        return {"status": "success", "message": "Mem0 backfill complete. Review files and reindex."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 def main() -> None:

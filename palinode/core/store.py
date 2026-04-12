@@ -545,6 +545,7 @@ def search_hybrid(
     hybrid_weight: float = 0.5,
     date_after: str | None = None,
     date_before: str | None = None,
+    context_entities: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search combining semantic vectors and BM25 keyword matching.
 
@@ -629,6 +630,22 @@ def search_hybrid(
     else:
         for key in sorted_keys:
             result_map[key]["score"] = rrf_scores[key] / max_score
+
+    # Ambient context boost (ADR-008): boost results matching caller's project context
+    if context_entities and config.context.enabled and config.context.boost != 1.0:
+        context_files: set[str] = set()
+        for entity in context_entities:
+            for row in get_entity_files(entity):
+                context_files.add(row["file_path"])
+        if context_files:
+            for key in sorted_keys:
+                r = result_map[key]
+                if r["file_path"] in context_files:
+                    r["score"] = r.get("score", 0) * config.context.boost
+            # Re-sort after context boost
+            sorted_keys = sorted(
+                sorted_keys, key=lambda k: result_map[k].get("score", 0.0), reverse=True
+            )
 
     merged = []
     for key in sorted_keys[:top_k]:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "palinode"
-version = "0.5.0"
+version = "0.6.0"
 description = "Persistent memory that makes AI agents smarter over time."
 authors = [
   {name = "Paul Kyle"}
@@ -38,7 +38,8 @@ palinode-watcher = "palinode.indexer.watcher:main"
 palinode-api = "palinode.api.server:main"
 palinode = "palinode.cli:main"
 palinode-mcp = "palinode.mcp:main"
-palinode-mcp-sse = "palinode.mcp:main_sse"
+palinode-mcp-http = "palinode.mcp:main_http"
+palinode-mcp-sse = "palinode.mcp:main_sse"  # deprecated alias for main_http
 
 [project.optional-dependencies]
 dev = [
@@ -47,4 +48,4 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["palinode", "palinode.core", "palinode.indexer", "palinode.api", "palinode.ingest", "palinode.consolidation", "palinode.migration", "palinode.cli"]
+packages = ["palinode", "palinode.core", "palinode.indexer", "palinode.api", "palinode.ingest", "palinode.consolidation", "palinode.cli"]

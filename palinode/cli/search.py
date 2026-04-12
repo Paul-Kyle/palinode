@@ -1,7 +1,28 @@
+import os
 import click
 from palinode.cli._api import api_client
 from palinode.cli._format import print_result, console, OutputFormat, get_default_format
+from palinode.core.config import config
 from rich.panel import Panel
+
+
+def _cli_resolve_context() -> list[str] | None:
+    """Resolve ambient project context from CWD for CLI (ADR-008)."""
+    if not config.context.enabled:
+        return None
+    explicit = os.environ.get("PALINODE_PROJECT")
+    if explicit:
+        return [explicit] if "/" in explicit else [f"project/{explicit}"]
+    basename = os.path.basename(os.getcwd())
+    if not basename:
+        return None
+    if basename in config.context.project_map:
+        entity = config.context.project_map[basename]
+        return [entity] if "/" in entity else [f"project/{entity}"]
+    if config.context.auto_detect:
+        return [f"project/{basename}"]
+    return None
+
 
 @click.command()
 @click.argument("query")
@@ -9,10 +30,12 @@ from rich.panel import Panel
 @click.option("--category", help="Filter by memory type/category")
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
 @click.option("--score/--no-score", default=False, help="Show relevance scores")
-def search(query, limit, category, fmt, score):
+@click.option("--no-context", is_flag=True, help="Disable ambient context boost")
+def search(query, limit, category, fmt, score, no_context):
     """Search memory by meaning or keyword."""
     try:
-        results = api_client.search(query, limit=limit, category=category)
+        context = None if no_context else _cli_resolve_context()
+        results = api_client.search(query, limit=limit, category=category, context=context)
         
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()
         

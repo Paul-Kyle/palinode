@@ -2,6 +2,55 @@
 
 All notable changes to Palinode. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-04-11
+
+### Added
+
+**Write-time contradiction check (ADR-004)**
+- When saving a memory, the system now checks for contradictions against existing files in the same entity scope
+- Contradiction candidates are surfaced before the save completes, with configurable thresholds
+- Background worker runs via asyncio queue (API) or disk-backed marker files (CLI/plugin)
+
+**Ambient context search (ADR-008)**
+- Search results are now boosted by project context inferred from the caller's working directory
+- Resolution chain: `PALINODE_PROJECT` env var → config project map → CWD auto-detect
+- Existing RRF hybrid search pipeline extended with a context scoring channel
+
+**Claude Code plugin scaffold**
+- `claude-plugin/` directory with plugin manifest for Claude Code marketplace submission
+
+**Claude Code skills**
+- `palinode-claude-code` — MCP setup and usage for Claude Code sessions
+- `palinode-memory` — general memory operations skill
+- `palinode-session` — automatic session lifecycle memory capture
+
+**Architecture Decision Records**
+- ADR-004: Event-driven consolidation (write-time contradiction check)
+- ADR-005: Debounced reflection executor
+- ADR-006: On-read reconsolidation
+- ADR-007: Access metadata and decay
+- ADR-008: Ambient context search
+
+**Documentation**
+- WHY-LOCAL-MEMORY.md — positioning document for local-first memory
+- Research paper: Memory Compaction and Augmented Recall for Persistent AI Agents
+- PRD (product requirements document)
+
+**Tests**
+- `test_write_time.py` — write-time contradiction check coverage
+- `test_context.py` — ambient context search and project boosting
+
+### Changed
+- MCP server uses Streamable HTTP transport (renamed from SSE entry point)
+- Search API accepts optional `context` parameter for entity-scoped boosting
+- Consolidation cron scheduling improvements
+
+### Removed
+- `palinode/migration/` — internal migration tooling removed
+- `plugin/` — old OpenClaw plugin (replaced by `claude-plugin/` scaffold)
+
+---
+
 ## [0.5.0] — 2026-04-10
 
 First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and LLM-driven consolidation applied by a deterministic executor.
@@ -23,7 +72,7 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 
 **Interfaces (all four expose the same capabilities)**
 - **MCP server** — Streamable HTTP transport (also supports stdio) with 18 tools. Stateless HTTP client, point it at any Palinode API server
-- **REST API** — FastAPI on port 6340, 20+ endpoints covering search, save, diff, triggers, history, blame, rollback, consolidation, session-end, lint, migrate
+- **REST API** — FastAPI on port 6340, 20+ endpoints covering search, save, diff, triggers, history, blame, rollback, consolidation, session-end, lint
 - **CLI** — 26 commands wrapping the REST API via Click. TTY-aware (human output interactive, JSON when piped). Remote access via `PALINODE_API` env var
 - **Plugin** — OpenClaw lifecycle hooks for agent frameworks with inject/extract patterns
 
@@ -37,9 +86,6 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 - `/session-end` endpoint — appends session summary to daily notes + one-liner to project status files
 - Session-end hook for Claude Code — auto-captures sessions on exit, idempotent, non-blocking
 - Entity extraction from daily notes with keyword fallback for untagged content
-
-**Migration**
-- `palinode migrate` — import existing markdown memory systems (OpenClaw format) with `--review` mode for dry-run inspection
 
 **Security and hardening**
 - Path validation on all file operations (rejects `..`, symlinks outside memory directory)

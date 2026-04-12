@@ -1,16 +1,17 @@
 """
 Palinode Consolidation Cron Entry Point
 
-Two-tier memory freshness:
-  Tier 1: Session append (plugin, every session, free — captures intent + result)
-  Tier 2: Deep clean twice/week (this script, full ops)
+Three-tier memory freshness:
+  Tier 1: Session append (hook/MCP, every session, free — captures intent + result)
+  Tier 2: Nightly dedup (--nightly, UPDATE/SUPERSEDE only, 1-day lookback)
+  Tier 3: Weekly deep clean (full ops, 3-7 day lookback)
 
-Crontab examples:
-    # Nightly (recommended if you have a local LLM — free)
-    0 3 * * * cd /path/to/palinode && PALINODE_DIR=~/.palinode venv/bin/python -m palinode.consolidation.cron --days 1
+Crontab examples (times in UTC, target 4am PT = 11:00 UTC during PDT):
+    # Nightly — lightweight dedup of today's sessions
+    0 11 * * * cd /path/to/palinode && PALINODE_DIR=~/.palinode venv/bin/python -m palinode.consolidation.cron --nightly --days 1
 
-    # Twice-weekly (if using cloud LLM — saves API cost)
-    0 3 * * 2,5 cd /path/to/palinode && PALINODE_DIR=~/.palinode venv/bin/python -m palinode.consolidation.cron --days 4
+    # Weekly — full compaction with MERGE/ARCHIVE
+    0 11 * * 0 cd /path/to/palinode && PALINODE_DIR=~/.palinode venv/bin/python -m palinode.consolidation.cron --days 3
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import logging
 import sys
 
 from palinode.core.config import config
-from palinode.consolidation.runner import run_consolidation
+from palinode.consolidation.runner import run_consolidation, run_nightly
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("palinode.consolidation.cron")
@@ -29,6 +30,8 @@ def main() -> None:
         logger.info("Consolidation is disabled in config. Exiting.")
         sys.exit(0)
 
+    nightly = "--nightly" in sys.argv
+
     # Parse --days N for custom lookback (default: config value)
     lookback = None
     if "--days" in sys.argv:
@@ -38,8 +41,13 @@ def main() -> None:
         except (IndexError, ValueError):
             pass
 
-    logger.info(f"Starting consolidation (lookback: {lookback or 'config default'} days)...")
-    result = run_consolidation(lookback_days=lookback)
+    mode = "nightly" if nightly else "weekly"
+    logger.info(f"Starting {mode} consolidation (lookback: {lookback or 'config default'} days)...")
+
+    if nightly:
+        result = run_nightly(lookback_days=lookback)
+    else:
+        result = run_consolidation(lookback_days=lookback)
 
     logger.info(f"Consolidation complete: {result}")
 

@@ -10,16 +10,18 @@ class PalinodeAPI:
         )
         self.client = httpx.Client(base_url=self.base_url, timeout=30.0)
 
-    def search(self, query: str, limit: int = 3, category: str = None):
+    def search(self, query: str, limit: int = 3, category: str = None, context: list[str] = None):
         payload: dict = {"query": query, "limit": limit}
         if category:
             payload["category"] = category
+        if context:
+            payload["context"] = context
 
         response = self.client.post("/search", json=payload)
         response.raise_for_status()
         return response.json()
 
-    def save(self, content: str, memory_type: str, entities: list[str] = None, title: str = None, source: str = None):
+    def save(self, content: str, memory_type: str, entities: list[str] = None, title: str = None, source: str = None, sync: bool = False):
         payload = {
             "content": content,
             "type": memory_type,
@@ -28,7 +30,8 @@ class PalinodeAPI:
         }
         if source:
             payload["source"] = source
-        response = self.client.post("/save", json=payload)
+        params = {"sync": "true"} if sync else None
+        response = self.client.post("/save", json=payload, params=params)
         response.raise_for_status()
         return response.json()
 
@@ -101,20 +104,6 @@ class PalinodeAPI:
             response = self.client.get(f"/entities/{entity}", timeout=10.0)
         else:
             response = self.client.get("/entities", timeout=10.0)
-        response.raise_for_status()
-        return response.json()
-
-    def migrate_openclaw(self, path: str, dry_run: bool = False):
-        response = self.client.post(
-            "/migrate/openclaw",
-            json={"path": path, "dry_run": dry_run},
-            timeout=120.0,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def migrate_mem0(self):
-        response = self.client.post("/migrate/mem0", timeout=600.0)
         response.raise_for_status()
         return response.json()
 

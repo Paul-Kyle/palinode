@@ -9,13 +9,20 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
 @click.option("--file", "file_path", type=click.Path(exists=True), help="Read content from file instead of argument")
 @click.option("--title", help="Optional title override")
 @click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
+@click.option(
+    "--sync/--no-sync",
+    default=False,
+    help="Run the write-time contradiction check inline and include its result "
+         "in the response. Default is async (fire-and-forget). Requires "
+         "consolidation.write_time.enabled in config.",
+)
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
-def save(content, memory_type, entities, file_path, title, source, fmt):
+def save(content, memory_type, entities, file_path, title, source, sync, fmt):
     """Store a new memory."""
     if file_path:
         with open(file_path, "r") as f:
             content = f.read()
-    
+
     if not content:
         console.print("[red]Error: Must provide content or a file.[/red]")
         click.Abort()
@@ -23,17 +30,33 @@ def save(content, memory_type, entities, file_path, title, source, fmt):
 
     try:
         source_val = source or "cli"
-        result = api_client.save(content, memory_type, entities=list(entities), title=title, source=source_val)
-        
+        result = api_client.save(
+            content,
+            memory_type,
+            entities=list(entities),
+            title=title,
+            source=source_val,
+            sync=sync,
+        )
+
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()
-        
+
         if output_fmt == OutputFormat.JSON:
             print_result(result, fmt=output_fmt)
         else:
             filename = result.get("file_path", result.get("file", "unknown"))
             id_str = result.get("id", "unknown")
             console.print(f"[green]Saved:[/green] {filename} (id: {id_str})")
-            
+            if sync and "write_time_check" in result:
+                check = result["write_time_check"]
+                ops = check.get("operations", [])
+                applied = check.get("applied_stats", {})
+                ms = check.get("llm_latency_ms", 0)
+                console.print(
+                    f"[dim]Write-time check:[/dim] {len(ops)} ops proposed, "
+                    f"applied={applied}, llm={ms}ms"
+                )
+
     except Exception as e:
         console.print(f"[red]Error saving memory: {str(e)}[/red]")
         click.Abort()
