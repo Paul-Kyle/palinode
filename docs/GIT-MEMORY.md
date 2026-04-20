@@ -21,15 +21,15 @@ palinode diff --days 7
 
 Find out *when* and *why* a specific fact was recorded. Palinode's blame shows **two dates**: the git commit date (when the file was last touched) and the frontmatter origin date (when the memory was first captured).
 
-This is critical for backfilled memories: a fact captured by Mem0 on February 11th and migrated to Palinode on March 29th shows both dates:
+This is critical for imported memories: a fact captured in an external system on February 11th and migrated to Palinode on March 29th shows both dates:
 
 ```bash
 palinode blame projects/my-app-milestones.md --search "deploy"
 ```
 ```
 ## Blame: projects/my-app-milestones.md
-Origin: 2026-02-11 | Source: mem0-backfill
-Note: Git shows 2026-03-29 (migration date). True origin is 2026-02-11 (from mem0-backfill).
+Origin: 2026-02-11 | Source: openclaw-migration
+Note: Git shows 2026-03-29 (migration date). True origin is 2026-02-11 (from openclaw-migration).
 
 ^dcdbf5f (2026-03-29) - [2026-02-15] M5 Phase 1 complete: all 9 modules deployed
 ```

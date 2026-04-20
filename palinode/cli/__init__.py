@@ -9,7 +9,7 @@ from palinode.cli.diff import diff
 from palinode.cli.consolidate import consolidate
 from palinode.cli.trigger import trigger
 from palinode.cli.doctor import doctor
-from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids, migrate_mem0
+from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids
 from palinode.cli.git import blame, history, rollback, push
 from palinode.cli.query import entities
 from palinode.cli.session_end import session_end
@@ -61,7 +61,6 @@ main.add_command(reindex)
 main.add_command(rebuild_fts)
 main.add_command(split_layers)
 main.add_command(bootstrap_ids)
-main.add_command(migrate_mem0)
 
 # Git
 main.add_command(blame)
