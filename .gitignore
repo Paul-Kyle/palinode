@@ -48,3 +48,4 @@ venv/
 server.log
 nohup.out
 .engram.db
+.claude/worktrees/

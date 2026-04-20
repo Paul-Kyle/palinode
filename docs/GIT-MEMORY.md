@@ -7,7 +7,7 @@ Palinode treats memory as code. Every fact, decision, and project detail your ag
 Because the memory directory is just a Git repository, Palinode provides built-in tools to inspect it without requiring you to use the Git CLI manually. These tools are available via:
 - **CLI Commands:** for human administrators.
 - **MCP Tools:** for LLMs via Claude Code.
-- **Plugin hooks:** read-only tools for the chat agent.
+- **OpenClaw Plugin:** read-only tools for the chat agent.
 
 ### 1. Diff
 
@@ -41,12 +41,12 @@ palinode blame decisions/app-five-modules.md --search "5 modules"
 # (origin: 2026-04-06, source: palinode — dates match)
 ```
 
-### 3. Timeline
+### 3. History
 
-Watch a structured memory evolve. Timeline shows all changes to a specific file, ordered chronologically.
+Watch a structured memory evolve. History shows all commits that touched a specific file, with diff stats and rename tracking.
 
 ```bash
-palinode timeline projects/my-app.md
+palinode history projects/my-app.md
 ```
 
 ### 4. Rollback (Admin Only)

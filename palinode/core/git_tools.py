@@ -238,10 +238,6 @@ def history(file_path: str, limit: int = 20) -> list[dict[str, str]]:
     return commits
 
 
-# Keep as alias for any remaining callers
-timeline = history
-
-
 def rollback(file_path: str, commit: str | None = None, dry_run: bool = False) -> str:
     """Revert a memory file to a previous version.
 

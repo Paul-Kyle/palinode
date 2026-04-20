@@ -49,7 +49,7 @@ graph TD
 
 ## 1. Session Recall (Every Agent Turn)
 
-**Hook:** `before_agent_start` in the agent plugin
+**Hook:** `before_agent_start` in the OpenClaw plugin
 
 Every time you send a message, Palinode injects relevant context **before the agent sees your message**. This happens in four phases:
 
@@ -120,7 +120,7 @@ Before injection, all content passes through `specs/scrub-patterns.yaml` — reg
 
 ## 2. Session Capture (End of Every Turn)
 
-**Hook:** `agent_end` in the agent plugin
+**Hook:** `agent_end` in the OpenClaw plugin
 
 After each agent response, the plugin captures the conversation to a daily note:
 
@@ -289,9 +289,7 @@ Each chunk is hashed before embedding. If the hash matches the existing entry, t
 
 ## 6. Git Versioning (Every Change)
 
-**Repo:** `Paul-Kyle/palinode-data` (PRIVATE)
-
-Every memory change is a git commit. This enables:
+Memories live in a git repository — typically a private repo you own, local or pushed to a remote of your choice. Every memory change is a git commit. This enables:
 
 | Tool | What It Does | Example |
 | --- | --- | --- |
