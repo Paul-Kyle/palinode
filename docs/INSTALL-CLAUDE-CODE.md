@@ -1,6 +1,6 @@
 # Installing Palinode with Claude Code
 
-Palinode gives Claude Code persistent memory via MCP — 18 tools for searching, saving, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
+Palinode gives Claude Code persistent memory via MCP — 17 tools for searching, saving, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
 
 ## Prerequisites
 
@@ -289,6 +289,7 @@ Search palinode for "recent project decisions"
 | `palinode_trigger` | Register a prospective recall trigger |
 | `palinode_lint` | Run health checks on memory files |
 | `palinode_session_end` | Capture session summary, decisions, blockers at end |
+| `palinode_prompt` | List, show, or activate versioned LLM prompts |
 
 ---
 
