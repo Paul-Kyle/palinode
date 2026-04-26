@@ -1,6 +1,5 @@
 import click
-import httpx
-from palinode.core.config import config
+from palinode.cli._api import HTTPStatusError, RequestError, api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
 
 
@@ -14,29 +13,17 @@ def ingest(url, name, inbox, fmt):
     if not url and not inbox:
         raise click.UsageError("Provide --url <URL> or --inbox")
 
-    api_port = config.services.api.port
     output_fmt = OutputFormat(fmt) if fmt else get_default_format()
 
     try:
         if inbox:
-            resp = httpx.post(f"http://127.0.0.1:{api_port}/ingest", timeout=60.0)
-            resp.raise_for_status()
-            data = resp.json()
+            data = api_client.ingest_inbox()
             if output_fmt == OutputFormat.JSON:
                 print_result(data, fmt=output_fmt)
             else:
                 console.print("[green]✓[/green] Inbox processed.")
         else:
-            payload = {"url": url}
-            if name:
-                payload["name"] = name
-            resp = httpx.post(
-                f"http://127.0.0.1:{api_port}/ingest-url",
-                json=payload,
-                timeout=60.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = api_client.ingest_url(url=url, name=name)
             if output_fmt == OutputFormat.JSON:
                 print_result(data, fmt=output_fmt)
             else:
@@ -44,12 +31,12 @@ def ingest(url, name, inbox, fmt):
                     console.print(f"[green]✓[/green] Saved to {data.get('file_path', 'research/')}")
                 else:
                     console.print("[yellow]No content extracted from URL.[/yellow]")
-    except httpx.HTTPStatusError as e:
+    except HTTPStatusError as e:
         detail = ""
         try:
             detail = e.response.json().get("detail", "")
         except Exception:
             pass
         console.print(f"[red]Error:[/red] {detail or e.response.status_code}")
-    except httpx.RequestError as e:
+    except RequestError as e:
         console.print(f"[red]Error:[/red] Cannot reach API — is palinode running? ({e})")

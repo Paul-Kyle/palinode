@@ -14,10 +14,10 @@ def test_search_hybrid_context_boost():
                     # Two results: palinode file and other-project file, initially ranked equally
                     mock_vec.return_value = [
                         {"file_path": "/mem/projects/palinode-adr.md", "content": "ADR-004", "score": 0.85},
-                        {"file_path": "/mem/projects/other-adr.md", "content": "ADR-052", "score": 0.86},
+                        {"file_path": "/mem/projects/kmd-adr.md", "content": "ADR-052", "score": 0.86},
                     ]
                     mock_fts.return_value = [
-                        {"file_path": "/mem/projects/other-adr.md", "content": "ADR-052", "score": 0.7},
+                        {"file_path": "/mem/projects/kmd-adr.md", "content": "ADR-052", "score": 0.7},
                         {"file_path": "/mem/projects/palinode-adr.md", "content": "ADR-004", "score": 0.6},
                     ]
                     # Entity lookup: project/palinode maps to the palinode file

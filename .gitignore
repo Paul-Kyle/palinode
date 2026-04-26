@@ -2,7 +2,13 @@
 # PRIVATE DATA — never commit to public repo
 # ============================================================
 # These directories contain personal memories, session transcripts,
-# and private project data. They stay local only.
+# and private project data. They stay local only. The broad pattern
+# (no leading slash) is intentional: catches any nested `people/`,
+# `projects/`, etc., anywhere in the tree as defense-in-depth.
+#
+# Two legitimate code locations are exempted below:
+#   - palinode/      shipped code (e.g. palinode/migration/ module)
+#   - examples/      shipped sample-data demonstrating the format
 people/
 projects/
 decisions/
@@ -12,6 +18,9 @@ archive/
 inbox/
 migration/
 research/
+
+!palinode/**
+!examples/**
 
 # ============================================================
 # Derived / Operational
@@ -49,3 +58,6 @@ server.log
 nohup.out
 .engram.db
 .claude/worktrees/
+
+# Launch-posts working draft — local-only, not for git
+artifacts/launch-posts.md

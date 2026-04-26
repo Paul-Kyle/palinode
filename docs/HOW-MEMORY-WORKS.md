@@ -289,7 +289,9 @@ Each chunk is hashed before embedding. If the hash matches the existing entry, t
 
 ## 6. Git Versioning (Every Change)
 
-Memories live in a git repository — typically a private repo you own, local or pushed to a remote of your choice. Every memory change is a git commit. This enables:
+**Repo:** `Paul-Kyle/palinode-data` (PRIVATE)
+
+Every memory change is a git commit. This enables:
 
 | Tool | What It Does | Example |
 | --- | --- | --- |

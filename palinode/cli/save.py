@@ -1,3 +1,5 @@
+import json as _json
+
 import click
 from palinode.cli._api import api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
@@ -7,8 +9,44 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
 @click.option("--type", "memory_type", required=False, help="Memory type (e.g. PersonMemory, Decision, Insight, ProjectSnapshot)")
 @click.option("--ps", "is_ps", is_flag=True, help="Shorthand for --type ProjectSnapshot (Palinode Save a mid-session snapshot)")
 @click.option("--entity", "entities", multiple=True, help="Entity tag (e.g. person/X, project/X)")
+@click.option(
+    "-p",
+    "--project",
+    help="Project slug shorthand — e.g. 'palinode' becomes entity 'project/palinode'. "
+         "Pairs with `palinode session-end -p` for consistent project tagging.",
+)
 @click.option("--file", "file_path", type=click.Path(exists=True), help="Read content from file instead of argument")
 @click.option("--title", help="Optional title override")
+@click.option(
+    "--slug",
+    help="URL-safe filename slug.  Auto-generated from content if omitted.",
+)
+@click.option(
+    "--core/--no-core",
+    "core",
+    default=None,
+    help=(
+        "Mark this memory as core (always injected at session start).  "
+        "Defaults to unset (regular memory)."
+    ),
+)
+@click.option(
+    "--confidence",
+    type=float,
+    help=(
+        "Confidence in this memory's accuracy (0.0–1.0).  Stored as "
+        "frontmatter; consumed by consolidation."
+    ),
+)
+@click.option(
+    "--metadata-json",
+    "metadata",
+    help=(
+        "Extra frontmatter fields as a JSON object string, "
+        "e.g. --metadata-json '{\"topic\": \"deployment\"}'.  "
+        "Parsed before sending — matches the API's `metadata` field."
+    ),
+)
 @click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
 @click.option(
     "--sync/--no-sync",
@@ -18,7 +56,22 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
          "consolidation.write_time.enabled in config.",
 )
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
-def save(content, memory_type, is_ps, entities, file_path, title, source, sync, fmt):
+def save(
+    content,
+    memory_type,
+    is_ps,
+    entities,
+    project,
+    file_path,
+    title,
+    slug,
+    core,
+    confidence,
+    metadata,
+    source,
+    sync,
+    fmt,
+):
     """Store a new memory.
 
     Use --ps as shorthand for --type ProjectSnapshot when dropping a quick
@@ -46,15 +99,39 @@ def save(content, memory_type, is_ps, entities, file_path, title, source, sync, 
         click.Abort()
         return
 
+    # Parse --metadata-json into a dict.  Reject non-object payloads to
+    # keep the API contract clear (metadata merges into a dict frontmatter).
+    if metadata:
+        raw = metadata
+        try:
+            metadata = _json.loads(raw)
+        except _json.JSONDecodeError as e:
+            console.print(f"[red]Error: --metadata-json is not valid JSON: {e}[/red]")
+            click.Abort()
+            return
+        if not isinstance(metadata, dict):
+            console.print("[red]Error: --metadata-json must be a JSON object.[/red]")
+            click.Abort()
+            return
+    else:
+        metadata = None
+
     try:
-        source_val = source or "cli"
+        # ADR-010 / #167: do not default source here.  The HTTP client sets
+        # X-Palinode-Source: cli on every request; only forward `source` in
+        # the body when the user explicitly passed --source.
         result = api_client.save(
             content,
             memory_type,
             entities=list(entities),
             title=title,
-            source=source_val,
+            source=source,
             sync=sync,
+            project=project,
+            slug=slug,
+            core=core,
+            confidence=confidence,
+            metadata=metadata,
         )
 
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()

@@ -161,7 +161,7 @@ class NightlyConfig:
 
 @dataclass
 class WriteTimeConfig:
-    """Tier 2a: write-time contradiction check on palinode_save.
+    """Tier 2a (ADR-004): write-time contradiction check on palinode_save.
 
     When enabled, every save schedules a background contradiction check
     against similar existing memories. The check runs asynchronously
@@ -291,11 +291,11 @@ class ContextConfig:
 
 @dataclass
 class ScopeConfig:
-    """Layer 1: scope chain for multi-harness, multi-agent, team memory.
+    """ADR-009 Layer 1: scope chain for multi-harness, multi-agent, team memory.
 
     Scopes form an entity-ref hierarchy: org → member → project → harness → agent → session.
     Memories inherit DOWN the chain by default. A session's scope is resolved from
-    env vars and config.
+    env vars and config; see ADR-009 §3.2.
 
     Layer 1 scope (this slice): resolution only — produces a ScopeChain from
     config + env. Later slices wire the chain into store search, the

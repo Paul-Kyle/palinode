@@ -1,37 +1,42 @@
-import click
+"""
+``palinode read`` — fetch a memory file via the API.
+
+Per ADR-010 (#168), this command goes through ``palinode/cli/_api.py``
+rather than reading disk directly.  Path validation, traversal
+protection, and ``.md`` extension fallback live server-side in the
+``/read`` handler — the CLI is now a thin presenter.
+"""
+from __future__ import annotations
+
 import json
-import os
 from datetime import date, datetime
-from palinode.core.config import config
-from palinode.cli._format import print_result, get_default_format, OutputFormat
+from typing import Any
 
+import click
 
-def _resolve_memory_path(file_path: str) -> tuple[str, str]:
-    """Resolve a relative memory path without allowing traversal outside memory_dir."""
-    if "\x00" in file_path:
-        raise click.ClickException("Null bytes are not allowed in paths")
-    if os.path.isabs(file_path):
-        raise click.ClickException("Absolute paths are not allowed")
-
-    base_dir = os.path.realpath(config.memory_dir)
-    resolved = os.path.realpath(os.path.join(base_dir, file_path))
-    try:
-        within_root = os.path.commonpath([base_dir, resolved]) == base_dir
-    except ValueError as exc:
-        raise click.ClickException("Invalid path") from exc
-    if not within_root:
-        raise click.ClickException("Path traversal rejected")
-    return base_dir, resolved
+from palinode.cli._api import HTTPStatusError, api_client
+from palinode.cli._format import OutputFormat, get_default_format
 
 
 @click.command()
 @click.argument("file_path")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None, help="Output format")
-@click.option("--meta/--no-meta", default=False, help="Include YAML frontmatter metadata as structured JSON")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json"]),
+    default=None,
+    help="Output format",
+)
+@click.option(
+    "--meta/--no-meta",
+    default=False,
+    help="Include YAML frontmatter as structured data",
+)
 def read(file_path, fmt, meta):
     """Read a specific memory file.
 
-    FILE_PATH is relative to the memory directory (e.g., "people/peter.md", "decisions/cli-pivot.md").
+    FILE_PATH is relative to the memory directory (e.g., "people/peter.md",
+    "decisions/cli-pivot.md").
 
     Examples:
 
@@ -39,69 +44,58 @@ def read(file_path, fmt, meta):
 
         palinode read projects/palinode-status.md --meta --format json
     """
-    _, full_path = _resolve_memory_path(file_path)
+    try:
+        result = api_client.read(file_path, meta=meta)
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise click.ClickException(f"File not found: {file_path}") from e
+        raise click.ClickException(f"Read failed: {e.response.text}") from e
 
-    if not os.path.exists(full_path):
-        if not file_path.endswith(".md"):
-            file_path = f"{file_path}.md"
-            _, full_path = _resolve_memory_path(file_path)
-        if not os.path.exists(full_path):
-            raise click.ClickException(f"File not found: {file_path}")
-
-    with open(full_path, "r") as f:
-        content = f.read()
+    effective_fmt = OutputFormat(fmt) if fmt else get_default_format()
 
     if meta:
-        # Parse frontmatter
-        frontmatter = {}
-        body = content
-        if content.startswith("---"):
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                try:
-                    import yaml
-                    frontmatter = yaml.safe_load(parts[1]) or {}
-                except Exception:
-                    pass
-                body = parts[2].strip()
-
-        result = {
-            "file": file_path,
-            "path": full_path,
-            "frontmatter": frontmatter,
-            "content": body,
-            "size_bytes": os.path.getsize(full_path),
-        }
-        effective_fmt = OutputFormat(fmt) if fmt else get_default_format()
         if effective_fmt == OutputFormat.JSON:
             click.echo(json.dumps(result, indent=2, default=_json_default))
         else:
             click.echo(_format_with_meta(result))
     else:
-        if fmt == "json":
-            result = {
-                "file": file_path,
-                "content": content,
-                "size_bytes": os.path.getsize(full_path),
-            }
-            click.echo(json.dumps(result, indent=2))
+        if effective_fmt == OutputFormat.JSON:
+            # Drop frontmatter from the no-meta JSON view for symmetry with
+            # the API's no-meta response shape.
+            slim = {k: v for k, v in result.items() if k != "frontmatter"}
+            click.echo(json.dumps(slim, indent=2, default=_json_default))
         else:
-            click.echo(content)
+            click.echo(result.get("content", ""))
 
 
-def _json_default(obj):
+def _json_default(obj: Any):
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     return str(obj)
 
 
-def _format_with_meta(result):
-    lines = []
-    if result.get("frontmatter"):
+def _format_with_meta(result: dict) -> str:
+    lines: list[str] = []
+    fm = result.get("frontmatter") or {}
+    if fm:
         lines.append("── Frontmatter ──")
-        for k, v in result["frontmatter"].items():
+        for k, v in fm.items():
             lines.append(f"  {k}: {v}")
         lines.append("")
     lines.append("── Content ──")
-    lines.append(result["content"])
+    # When meta=True, the API returns the full file content (frontmatter +
+    # body).  Strip the leading frontmatter block for cleaner CLI output.
+    content = result.get("content", "")
+    body = _strip_frontmatter(content)
+    lines.append(body)
     return "\n".join(lines)
+
+
+def _strip_frontmatter(content: str) -> str:
+    """If `content` starts with `---`, drop the frontmatter block."""
+    if not content.startswith("---"):
+        return content
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return content
+    return parts[2].lstrip("\n")

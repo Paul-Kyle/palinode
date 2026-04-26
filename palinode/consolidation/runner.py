@@ -338,7 +338,10 @@ def _write_project_summary(project_id: str, consolidation: dict) -> None:
     
     # Simple write, but realistically we'd merge with existing body/frontmatter.
     # We will log the new summary block or replace the content.
-    now = _utc_now().strftime("%Y-%m-%d %H:%M:%SZ")
+    # #193: human-readable UTC log heading. Previously used a literal ``Z``
+    # suffix which trips the project-wide ``strftime("...Z")`` audit; ``UTC``
+    # is unambiguous and keeps the log scannable.
+    now = _utc_now().strftime("%Y-%m-%d %H:%M:%S UTC")
     
     status_bullets = consolidation.get("status_bullets", [])
     bullets_text = "\n".join(f"- {b}" for b in status_bullets)

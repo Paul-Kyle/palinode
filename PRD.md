@@ -1,7 +1,7 @@
 ---
 created: 2026-03-22T16:02:00Z
 status: draft-v1
-author: Palinode contributors
+author: Paul Kyle + agent
 ---
 
 # Palinode — Product Requirements Document
@@ -52,7 +52,7 @@ All of these store things. None of them *remember*.
 
 **Primary:** AI agents (Claude-based) acting as long-lived personal assistants.
 
-**Secondary:** The human user who browses, edits, and reviews memory files directly; receives daily digests and weekly reviews.
+**Secondary:** The human (Paul) who browses, edits, and reviews memory files directly; receives daily digests and weekly reviews.
 
 **Tertiary:** Other AI agents that read from shared memory (multi-agent setups).
 
@@ -704,7 +704,7 @@ Prompts are not disposable. They're the most durable artifact in the system — 
 
 - [ ] Agent remembers project state across sessions without MEMORY.md
 - [ ] Semantic search returns relevant results for project/people queries
-- [ ] The user re-explains stable facts less often
+- [ ] Paul re-explains stable facts less often
 
 **After 1 month:**
 
@@ -717,4 +717,4 @@ Prompts are not disposable. They're the most durable artifact in the system — 
 
 - [ ] Multiple agents share Palinode (read access for all agent profiles)
 - [ ] Palinode has survived at least one infrastructure failure without data loss
-- [ ] The user trusts the system enough to stop manually curating MEMORY.md
+- [ ] Paul trusts the system enough to stop manually curating MEMORY.md

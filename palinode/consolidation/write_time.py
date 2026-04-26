@@ -1,5 +1,5 @@
 """
-Tier 2a: Write-time contradiction check on palinode_save.
+Tier 2a: Write-time contradiction check on palinode_save (ADR-004).
 
 When enabled, every save schedules a background contradiction check against
 similar existing memories. Runs asynchronously via an in-process asyncio queue
@@ -7,7 +7,7 @@ similar existing memories. Runs asynchronously via an in-process asyncio queue
 (when the save comes from a CLI or plugin path without a long-lived worker).
 
 Errors in the check are logged but never propagate to the save caller. The
-save-never-fails invariant is load-bearing.
+save-never-fails invariant is load-bearing — see ADR-004 for rationale.
 
 Public API:
     schedule_contradiction_check(file_path, item, *, sync=False) -> dict | None
@@ -86,7 +86,7 @@ def schedule_contradiction_check(
 
     Never raises. Errors in the check are logged and swallowed — the save
     call path must never fail because of a tier 2a problem. This is the
-    load-bearing invariant.
+    ADR-004 load-bearing invariant.
     """
     if not config.consolidation.write_time.enabled:
         return None

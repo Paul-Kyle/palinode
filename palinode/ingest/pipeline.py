@@ -16,6 +16,7 @@ import re
 import time
 import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -317,7 +318,9 @@ def write_research_file(
         "source_type": file_type,
         "date": today,
         "tags": [],
-        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # #193: timezone-aware UTC ISO-8601. Previously used
+        # ``time.strftime("...Z")`` which emits local time stamped as UTC.
+        "last_updated": datetime.now(UTC).isoformat(),
     }
 
     doc = f"---\n{yaml.dump(fm, default_flow_style=False)}---\n\n# {name}\n\n{content}\n"

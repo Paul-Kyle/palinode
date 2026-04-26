@@ -71,7 +71,7 @@ def _coerce_str_array(value: Any) -> Any:
 
 
 def _resolve_context() -> list[str] | None:
-    """Resolve ambient project context from environment.
+    """Resolve ambient project context from environment (ADR-008).
 
     Resolution order:
     1. PALINODE_PROJECT env var (explicit entity ref, e.g. "project/palinode")
@@ -113,27 +113,36 @@ def _api_url(path: str) -> str:
     return f"http://{host}:{port}{path}"
 
 
+# ADR-010 / #167: every MCP request carries surface attribution as a
+# header.  The API uses this when the body doesn't explicitly set `source`,
+# giving consistent provenance across the four surfaces without each tool
+# dispatcher having to thread a default through every call site.
+from palinode.core.defaults import SAVE_SOURCE_HEADER as _SOURCE_HEADER
+
+_DEFAULT_HEADERS = {_SOURCE_HEADER: "mcp"}
+
+
 async def _get(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP GET to the API server."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
         return await client.get(_api_url(path), params=params, timeout=timeout)
 
 
 async def _post(path: str, json: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP POST to the API server."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
         return await client.post(_api_url(path), json=json, timeout=timeout)
 
 
 async def _post_params(path: str, params: dict | None = None, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP POST with query params (no JSON body) to the API server."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
         return await client.post(_api_url(path), params=params, timeout=timeout)
 
 
 async def _delete(path: str, timeout: float = 30.0) -> httpx.Response:
     """Async HTTP DELETE to the API server."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=_DEFAULT_HEADERS) as client:
         return await client.delete(_api_url(path), timeout=timeout)
 
 
@@ -227,6 +236,15 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Relative path to the memory file (e.g., 'people/alice.md', 'projects/palinode-status.md')",
                     },
+                    "meta": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, the response includes parsed frontmatter "
+                            "alongside the body.  Default false (body only) to "
+                            "match prior behavior."
+                        ),
+                        "default": False,
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -251,8 +269,8 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "category": {
                         "type": "string",
-                        "description": "Filter by category: person, project, decision, insight, research",
-                        "enum": ["person", "project", "decision", "insight", "research"],
+                        "description": "Filter by category (memory directory name): people, projects, decisions, insights, research",
+                        "enum": ["people", "projects", "decisions", "insights", "research"],
                     },
                     "limit": {
                         "type": "integer",
@@ -271,6 +289,37 @@ async def list_tools() -> list[types.Tool]:
                         "type": "boolean",
                         "description": "Include daily session notes at full rank (default: false, daily/ files are penalized)",
                         "default": False,
+                    },
+                    "since_days": {
+                        "type": "integer",
+                        "description": (
+                            "Only return memories created/updated in the last "
+                            "N days.  Equivalent to setting `date_after` to "
+                            "now-N days; the API derives one from the other."
+                        ),
+                    },
+                    "types": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "PersonMemory",
+                                "Decision",
+                                "ProjectSnapshot",
+                                "Insight",
+                                "ResearchRef",
+                                "ActionItem",
+                            ],
+                        },
+                        "description": "Filter by memory type (matches frontmatter `type`).",
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": (
+                            "Override similarity threshold (0.0–1.0).  Higher "
+                            "= stricter.  Defaults to MCP-tuned value from "
+                            "config when omitted."
+                        ),
                     },
                 },
                 "required": ["query"],
@@ -316,6 +365,39 @@ async def list_tools() -> list[types.Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Related entity refs e.g. ['person/alice', 'project/alpha']",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Project slug shorthand — e.g. 'palinode' becomes "
+                            "entity 'project/palinode'.  Pairs with "
+                            "`palinode_session_end`'s `project` field for "
+                            "consistent project tagging across save and "
+                            "session-end."
+                        ),
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "Optional human-readable title.  Stored in "
+                            "frontmatter and used in list/search displays."
+                        ),
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": (
+                            "Arbitrary additional frontmatter fields to merge "
+                            "into the saved memory.  Keys override the "
+                            "auto-generated frontmatter; use sparingly."
+                        ),
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": (
+                            "Caller's confidence in this memory's accuracy "
+                            "(0.0–1.0).  Stored as frontmatter; surfaces in "
+                            "downstream consolidation passes."
+                        ),
                     },
                     "source": {
                         "type": "string",
@@ -408,10 +490,31 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="palinode_consolidate",
-            description="Run a manual knowledge consolidation pass.",
+            description=(
+                "Run a manual knowledge consolidation pass.  Set `dry_run=true` "
+                "to preview the proposed operations without applying them."
+            ),
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": (
+                            "Preview operations without writing changes.  "
+                            "Recommended when invoking from MCP — the tool is "
+                            "annotated destructive."
+                        ),
+                        "default": False,
+                    },
+                    "nightly": {
+                        "type": "boolean",
+                        "description": (
+                            "Run the nightly compaction prompt instead of the "
+                            "default write-time pass."
+                        ),
+                        "default": False,
+                    },
+                },
             },
             annotations=types.ToolAnnotations(
                 title="Run Consolidation",
@@ -453,16 +556,23 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {
+                    "file_path": {
                         "type": "string",
                         "description": "Memory file path (e.g., 'projects/my-app.md')",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": (
+                            "Deprecated alias for `file_path` (ADR-010 / #164). "
+                            "Will be removed in a future release."
+                        ),
                     },
                     "search": {
                         "type": "string",
                         "description": "Optional: filter to lines containing this text",
                     },
                 },
-                "required": ["file"],
+                # `file_path` or `file` (legacy) — validated in the dispatcher.
             },
             annotations=types.ToolAnnotations(
                 title="Blame / Provenance",
@@ -478,9 +588,16 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {
+                    "file_path": {
                         "type": "string",
                         "description": "Memory file path to rollback",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": (
+                            "Deprecated alias for `file_path` (ADR-010 / #164). "
+                            "Will be removed in a future release."
+                        ),
                     },
                     "commit": {
                         "type": "string",
@@ -492,7 +609,7 @@ async def list_tools() -> list[types.Tool]:
                         "default": True,
                     },
                 },
-                "required": ["file"],
+                # `file_path` or `file` (legacy) — validated in the dispatcher.
             },
             annotations=types.ToolAnnotations(
                 title="Rollback File",
@@ -534,6 +651,21 @@ async def list_tools() -> list[types.Tool]:
                     "trigger_id": {
                         "type": "string",
                         "description": "For 'delete' or 'create': Custom UUID or ID to delete/create",
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": (
+                            "For 'create': Similarity threshold (0.0–1.0).  "
+                            "Higher = stricter match required to fire.  "
+                            "Default 0.75."
+                        ),
+                    },
+                    "cooldown_hours": {
+                        "type": "integer",
+                        "description": (
+                            "For 'create': Hours to wait between consecutive "
+                            "firings of the same trigger.  Default 24."
+                        ),
                     },
                 },
                 "required": ["action"],
@@ -622,7 +754,6 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "For 'list': filter by task type",
                         "enum": ["compaction", "extraction", "update", "classification", "nightly-consolidation"],
-                        "enum": ["compaction", "extraction", "update", "classification"],
                     },
                 },
                 "required": ["action"],
@@ -680,10 +811,26 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── read ──────────────────────────────────────────────────────────
         elif name == "palinode_read":
-            resp = await _get("/read", params={"file_path": arguments["file_path"], "meta": "true"})
+            # ADR-010 / #168: honor caller's `meta` request.  We always fetch
+            # with meta=true (cheap; parser already runs) but only render
+            # frontmatter when the caller asked for it.
+            include_meta = bool(arguments.get("meta", False))
+            resp = await _get(
+                "/read",
+                params={"file_path": arguments["file_path"], "meta": "true"},
+            )
             if resp.status_code != 200:
                 return _text(f"Error reading file: {resp.text}")
-            return _text(resp.json()["content"])
+            data = resp.json()
+            content = data.get("content", "")
+            if include_meta:
+                fm = data.get("frontmatter") or {}
+                # Render as YAML-ish frontmatter + body so downstream consumers
+                # can re-parse if they want.  Keep it simple: the file already
+                # has the same structure on disk.
+                fm_lines = "\n".join(f"{k}: {v!r}" for k, v in fm.items())
+                return _text(f"---\n{fm_lines}\n---\n{content}")
+            return _text(content)
 
         # ── search ────────────────────────────────────────────────────────
         elif name == "palinode_search":
@@ -698,9 +845,18 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 body["date_before"] = arguments["date_before"]
             if arguments.get("include_daily"):
                 body["include_daily"] = True
-            # Use MCP threshold, not API default
-            body["threshold"] = config.search.mcp_threshold
-            # ambient context boost
+            if arguments.get("since_days") is not None:
+                body["since_days"] = int(arguments["since_days"])
+            if arguments.get("types"):
+                body["types"] = _coerce_str_array(arguments["types"])
+            # ADR-010 / #163: caller-supplied threshold wins; otherwise use
+            # the MCP-tuned default (typically tighter than the API default
+            # to keep auto-context noise low).
+            if arguments.get("threshold") is not None:
+                body["threshold"] = float(arguments["threshold"])
+            else:
+                body["threshold"] = config.search.mcp_threshold
+            # ADR-008: ambient context boost
             context = _resolve_context()
             if context:
                 body["context"] = context
@@ -721,17 +877,29 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
             except ValueError as e:
                 return _text(f"Error: {e}")
 
-            body = {
+            body: dict[str, Any] = {
                 "content": arguments["content"],
                 "type": resolved_type,
-                "source": arguments.get("source", "mcp"),
             }
+            # ADR-010 / #167: only set body source when caller explicitly
+            # supplied one.  Otherwise the X-Palinode-Source header (set on
+            # every MCP request) carries attribution to the API.
+            if arguments.get("source"):
+                body["source"] = arguments["source"]
             if arguments.get("slug"):
                 body["slug"] = arguments["slug"]
             if arguments.get("core") is not None:
                 body["core"] = arguments["core"]
             if arguments.get("entities"):
                 body["entities"] = _coerce_str_array(arguments["entities"])
+            if arguments.get("project"):
+                body["project"] = arguments["project"]
+            if arguments.get("title"):
+                body["title"] = arguments["title"]
+            if arguments.get("metadata") is not None:
+                body["metadata"] = arguments["metadata"]
+            if arguments.get("confidence") is not None:
+                body["confidence"] = float(arguments["confidence"])
 
             resp = await _post("/save", json=body)
             if resp.status_code != 200:
@@ -788,7 +956,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── consolidate ───────────────────────────────────────────────────
         elif name == "palinode_consolidate":
-            resp = await _post("/consolidate", timeout=300.0)
+            body: dict[str, Any] = {}
+            if arguments.get("dry_run"):
+                body["dry_run"] = True
+            if arguments.get("nightly"):
+                body["nightly"] = True
+            resp = await _post("/consolidate", json=body, timeout=300.0)
             if resp.status_code != 200:
                 return _text(f"Consolidation failed: {resp.text}")
             return _text(json.dumps(resp.json(), indent=2))
@@ -827,7 +1000,11 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── blame ─────────────────────────────────────────────────────────
         elif name == "palinode_blame":
-            file_path = arguments["file"]
+            # ADR-010 / #164: prefer canonical `file_path`; accept legacy
+            # `file` for one release.
+            file_path = arguments.get("file_path") or arguments.get("file")
+            if not file_path:
+                return _text("Error: file_path is required")
             params: dict[str, str] = {}
             if arguments.get("search"):
                 params["search"] = arguments["search"]
@@ -838,7 +1015,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── rollback ──────────────────────────────────────────────────────
         elif name == "palinode_rollback":
-            params: dict[str, str] = {"file_path": arguments["file"]}
+            # ADR-010 / #164: prefer canonical `file_path`; accept legacy
+            # `file` for one release.
+            file_path = arguments.get("file_path") or arguments.get("file")
+            if not file_path:
+                return _text("Error: file_path is required")
+            params: dict[str, str] = {"file_path": file_path}
             if arguments.get("commit"):
                 params["commit"] = arguments["commit"]
             params["dry_run"] = str(arguments.get("dry_run", True)).lower()
@@ -884,6 +1066,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 }
                 if arguments.get("trigger_id"):
                     body["trigger_id"] = arguments["trigger_id"]
+                if arguments.get("threshold") is not None:
+                    body["threshold"] = arguments["threshold"]
+                if arguments.get("cooldown_hours") is not None:
+                    body["cooldown_hours"] = arguments["cooldown_hours"]
                 resp = await _post("/triggers", json=body)
                 if resp.status_code != 200:
                     return _text(f"Error: {resp.text}")

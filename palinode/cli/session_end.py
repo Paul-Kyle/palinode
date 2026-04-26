@@ -1,9 +1,5 @@
 import click
-import hashlib
-import json
-import os
-from datetime import datetime, timezone
-from palinode.core.config import config
+from palinode.cli._api import HTTPStatusError, RequestError, api_client
 from palinode.cli._format import print_result, get_default_format, OutputFormat
 
 
@@ -13,8 +9,15 @@ from palinode.cli._format import print_result, get_default_format, OutputFormat
 @click.option("--blocker", "-b", multiple=True, help="Open blocker or next step (repeatable)")
 @click.option("--project", "-p", default=None, help="Project slug to append status to (e.g., 'palinode')")
 @click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
+@click.option("--harness", help="Harness identifier (e.g., claude-code, cursor) — #145")
+@click.option("--cwd", help="Working directory the session ran in — #145")
+@click.option("--model", help="Model name (e.g., claude-opus-4-7) — #145")
+@click.option("--trigger", help="What triggered this save (manual, wrap-slash, hook, …) — #145")
+@click.option("--session-id", "session_id", help="Opaque session id from the harness — #145")
+@click.option("--duration-seconds", "duration_seconds", type=int, help="Session duration in seconds — #145")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None, help="Output format")
-def session_end(summary, decision, blocker, project, source, fmt):
+def session_end(summary, decision, blocker, project, source, harness, cwd, model,
+                trigger, session_id, duration_seconds, fmt):
     """Capture session outcomes to daily notes and project status.
 
     Call at the end of a coding or chat session to persist what was accomplished.
@@ -25,96 +28,47 @@ def session_end(summary, decision, blocker, project, source, fmt):
 
         palinode session-end "Fixed embedding timeout" -d "Increase batch size" -b "Test under load" -p palinode
     """
-    now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    now_iso = now.isoformat()
-
-    # Build session entry
-    source_val = source or "cli"
-    parts = [f"## Session End — {now_iso}\n"]
-    parts.append(f"**Source:** {source_val}\n")
-    parts.append(f"**Summary:** {summary}\n")
-
     decisions = list(decision)
     blockers = list(blocker)
 
-    if decisions:
-        parts.append("**Decisions:**")
-        for d in decisions:
-            parts.append(f"- {d}")
-        parts.append("")
-    if blockers:
-        parts.append("**Blockers/Next:**")
-        for b in blockers:
-            parts.append(f"- {b}")
-        parts.append("")
-
-    session_entry = "\n".join(parts)
-
-    # Write to daily notes
-    daily_dir = os.path.join(config.memory_dir, "daily")
-    os.makedirs(daily_dir, exist_ok=True)
-    daily_path = os.path.join(daily_dir, f"{today}.md")
-    with open(daily_path, "a") as f:
-        f.write(f"\n{session_entry}\n")
-
-    # Append status to project -status.md if project specified
-    status_msg = ""
-    if project:
-        status_path = os.path.join(config.memory_dir, "projects", f"{project}-status.md")
-        if os.path.exists(status_path):
-            one_liner = summary.replace("\n", " ").strip()[:200]
-            with open(status_path, "a") as f:
-                f.write(f"\n- [{today}] {one_liner}\n")
-            status_msg = f" + status → {project}-status.md"
-
-    # Also save as an individual indexed memory file (M0: dual-write)
-    individual_file = None
     try:
-        import httpx
-        short_hash = hashlib.sha256(summary.encode()).hexdigest()[:8]
-        api_url = f"http://localhost:{config.services.api.port}/save"
-        save_payload = {
-            "content": session_entry,
-            "type": "ProjectSnapshot" if project else "Insight",
-            "slug": f"session-end-{today}-{project}-{short_hash}" if project else f"session-end-{today}-{short_hash}",
-            "entities": [f"project/{project}"] if project else [],
-            "source": source_val,
-        }
-        resp = httpx.post(api_url, json=save_payload, timeout=10.0)
-        if resp.status_code == 200:
-            individual_file = resp.json().get("file_path")
-    except Exception:
-        pass  # Non-fatal — daily append is the primary path
-
-    # Git commit
-    try:
-        import subprocess
-        files_to_add = [daily_path]
-        if project and status_msg:
-            files_to_add.append(os.path.join(config.memory_dir, "projects", f"{project}-status.md"))
-        subprocess.run(
-            ["git", "-C", config.memory_dir, "add"] + files_to_add,
-            capture_output=True, check=False
+        result = api_client.session_end(
+            summary=summary,
+            decisions=decisions,
+            blockers=blockers,
+            project=project,
+            source=source,
+            harness=harness,
+            cwd=cwd,
+            model=model,
+            trigger=trigger,
+            session_id=session_id,
+            duration_seconds=duration_seconds,
         )
-        subprocess.run(
-            ["git", "-C", config.memory_dir, "commit", "-m", f"session-end: {summary[:72]}"],
-            capture_output=True, check=False
-        )
-    except Exception:
-        pass  # Non-fatal if git fails
+    except HTTPStatusError as e:
+        raise click.ClickException(f"Session-end failed: {e.response.text}") from e
+    except RequestError as e:
+        raise click.ClickException(f"Cannot reach API — is palinode running? ({e})") from e
 
-    result = {
-        "daily_file": f"daily/{today}.md",
-        "individual_file": individual_file,
-        "project_status": f"projects/{project}-status.md" if status_msg else None,
-        "summary": summary,
-        "decisions": decisions,
-        "blockers": blockers,
-    }
+    daily_file = result.get("daily_file")
+    status_file = result.get("status_file")
+    individual_file = result.get("individual_file")
+    entry = result.get("entry", "")
 
     effective_fmt = OutputFormat(fmt) if fmt else get_default_format()
     if effective_fmt == OutputFormat.JSON:
-        print_result(result, OutputFormat.JSON)
+        # Preserve the prior CLI JSON shape: callers that script against
+        # `palinode session-end --format json` should still see summary/
+        # decisions/blockers and `project_status` (alias for `status_file`).
+        out = {
+            "daily_file": daily_file,
+            "individual_file": individual_file,
+            "project_status": status_file,
+            "summary": summary,
+            "decisions": decisions,
+            "blockers": blockers,
+        }
+        print_result(out, OutputFormat.JSON)
     else:
-        click.echo(f"Session captured → daily/{today}.md{status_msg}\n\n{session_entry}")
+        status_msg = f" + status → {status_file.split('/')[-1]}" if status_file else ""
+        click.echo(f"Session captured → {daily_file}{status_msg}\n\n{entry}")

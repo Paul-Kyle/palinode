@@ -66,28 +66,87 @@ def test_save_with_mcp_source(mock_memory_dir):
         assert "source: mcp" in content
 
 def test_save_defaults_source_to_cli(mock_memory_dir):
+    """ADR-010 / #167: when --source is not passed, the body field is None
+    (the X-Palinode-Source header carries attribution; the API resolves it).
+    """
     runner = CliRunner()
-    
+
     with patch("palinode.cli._api.api_client.save") as mock_save:
         mock_save.return_value = {"file": "test", "id": "test"}
         result = runner.invoke(save, ["test", "--type", "Insight"])
-        
+
         assert result.exit_code == 0
         mock_save.assert_called_once()
-        assert mock_save.call_args[1]["source"] == "cli"
+        # No --source passed → body source field is None.  The CLI's httpx
+        # Client carries `X-Palinode-Source: cli` so the API sees the
+        # surface attribution via header.
+        assert mock_save.call_args[1]["source"] is None
+
+
+def test_cli_client_sends_source_header():
+    """ADR-010 / #167: the CLI httpx Client must carry X-Palinode-Source: cli
+    so saves without explicit body `source` are still attributed correctly.
+    """
+    from palinode.cli._api import api_client
+    from palinode.core.defaults import SAVE_SOURCE_HEADER
+
+    assert api_client.client.headers.get(SAVE_SOURCE_HEADER) == "cli"
+
+
+def test_save_uses_header_when_body_source_absent(mock_memory_dir):
+    """API resolves source via the X-Palinode-Source header when the body
+    doesn't set one (ADR-010 / #167)."""
+    with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
+        res = client.post(
+            "/save",
+            json={"content": "hdr test", "type": "Insight"},
+            headers={"X-Palinode-Source": "cursor"},
+        )
+        assert res.status_code == 200
+        with open(res.json()["file_path"], "r") as f:
+            content = f.read()
+        assert "source: cursor" in content
+
+
+def test_save_body_source_wins_over_header(mock_memory_dir):
+    """Explicit body `source` beats the header (ADR-010 / #167 precedence)."""
+    with patch("palinode.core.store.scan_memory_content", return_value=(True, "OK")):
+        res = client.post(
+            "/save",
+            json={"content": "win test", "type": "Insight", "source": "explicit"},
+            headers={"X-Palinode-Source": "cursor"},
+        )
+        assert res.status_code == 200
+        with open(res.json()["file_path"], "r") as f:
+            content = f.read()
+        assert "source: explicit" in content
 
 def test_session_end_includes_source(mock_memory_dir):
+    """ADR-010 / #170: CLI now goes through the API. Patch
+    ``api_client.session_end`` to invoke the in-process API handler so
+    the daily-file end-to-end assertion still holds."""
+    from palinode.api.server import session_end_api, SessionEndRequest
+
     runner = CliRunner()
-    
-    with patch("subprocess.run"):
+
+    def _fake_session_end(**kwargs):
+        # Drop None values so the API's pydantic defaults take effect.
+        clean = {k: v for k, v in kwargs.items() if v is not None}
+        # `decisions`/`blockers` come through as [] when no flags passed;
+        # the in-process handler is happy with empty lists.
+        return session_end_api(SessionEndRequest(**clean))
+
+    with patch("palinode.cli._api.api_client.session_end", side_effect=_fake_session_end), \
+         patch("subprocess.run"), \
+         patch("palinode.api.server._generate_description", return_value="t"):
         result = runner.invoke(session_end, ["Tested something", "--source", "claude-code", "--project", "palinode"])
-        assert result.exit_code == 0
-        
+        assert result.exit_code == 0, result.output
+
     from datetime import datetime, timezone
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     daily_file = os.path.join(mock_memory_dir, "daily", f"{today}.md")
-    
+
     with open(daily_file, "r") as f:
         content = f.read()
-        
+
     assert "**Source:** claude-code" in content

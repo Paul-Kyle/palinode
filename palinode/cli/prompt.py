@@ -1,16 +1,9 @@
 """CLI commands for managing versioned LLM prompts stored as memory files."""
-import json
-
 import click
-import httpx
 from rich.table import Table
 
-from palinode.core.config import config
+from palinode.cli._api import HTTPStatusError, api_client
 from palinode.cli._format import console, get_default_format, OutputFormat, print_result
-
-
-def _api_url(path: str) -> str:
-    return f"http://{config.services.api.host}:{config.services.api.port}{path}"
 
 
 @click.group()
@@ -25,14 +18,8 @@ def prompt():
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default=None)
 def prompt_list(task: str | None, fmt: str | None) -> None:
     """List all stored prompt versions."""
-    params: dict = {}
-    if task:
-        params["task"] = task
-
     try:
-        resp = httpx.get(_api_url("/prompts"), params=params, timeout=30.0)
-        resp.raise_for_status()
-        data = resp.json()
+        data = api_client.list_prompts(task=task)
     except Exception as e:
         console.print(f"[red]Error listing prompts: {e}[/red]")
         raise click.Abort()
@@ -73,14 +60,13 @@ def prompt_list(task: str | None, fmt: str | None) -> None:
 def prompt_show(name: str, fmt: str | None) -> None:
     """Display the content of a specific prompt."""
     try:
-        resp = httpx.get(_api_url(f"/prompts/{name}"), timeout=30.0)
-        if resp.status_code == 404:
+        data = api_client.get_prompt(name)
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
             console.print(f"[red]Prompt '{name}' not found.[/red]")
             raise click.Abort()
-        resp.raise_for_status()
-        data = resp.json()
-    except click.Abort:
-        raise
+        console.print(f"[red]Error reading prompt: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error reading prompt: {e}[/red]")
         raise click.Abort()
@@ -103,14 +89,13 @@ def prompt_show(name: str, fmt: str | None) -> None:
 def prompt_activate(name: str, fmt: str | None) -> None:
     """Activate a prompt version (deactivates others of the same task)."""
     try:
-        resp = httpx.post(_api_url(f"/prompts/{name}/activate"), timeout=30.0)
-        if resp.status_code == 404:
+        data = api_client.activate_prompt(name)
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
             console.print(f"[red]Prompt '{name}' not found.[/red]")
             raise click.Abort()
-        resp.raise_for_status()
-        data = resp.json()
-    except click.Abort:
-        raise
+        console.print(f"[red]Error activating prompt: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error activating prompt: {e}[/red]")
         raise click.Abort()

@@ -15,9 +15,10 @@ import sqlite3
 import sqlite_vec
 import json
 import os
+import struct
 import hashlib
 from typing import Any, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from palinode.core.config import config
 
 # ── Security Scanning ────────────────────────────────────────────────────────
@@ -352,7 +353,7 @@ def search(query_embedding: list[float], category: str | None = None,
         top_k (int): Maximum number of results to return.
         threshold (float): Minimum cosine similarity score (0.0-1.0).
         context_entities (list[str] | None): Entity refs (e.g. ["project/palinode"])
-            for ambient context boost. Matching results get score * config.context.boost.
+            for ADR-008 ambient context boost. Matching results get score * config.context.boost.
         include_daily (bool): If True, skip the daily/ penalty (search daily notes at full rank).
 
     Returns:
@@ -424,7 +425,7 @@ def search(query_embedding: list[float], category: str | None = None,
 
     db.close()
 
-    # Ambient context boost (same logic as search_hybrid)
+    # ADR-008: Ambient context boost (same logic as search_hybrid)
     if context_entities and config.context.enabled and config.context.boost != 1.0:
         context_files: set[str] = set()
         for entity in context_entities:
@@ -671,6 +672,97 @@ def list_recent(
     return results
 
 
+def recent_save_embeddings(
+    window_minutes: int,
+    now: datetime | None = None,
+    fetch_limit: int = 200,
+) -> list[tuple[str, list[float]]]:
+    """Return embeddings of chunks indexed within the last ``window_minutes``.
+
+    Backs the session-end semantic-dedup check (#126).  Joins ``chunks_vec``
+    against ``chunks`` so we can pull the embedding alongside a useful slug
+    (the ``id`` column doubles as a human-readable identifier the API uses
+    when reporting which prior save matched).
+
+    "Recent" is determined by file mtime, not by ``chunks.created_at``: the
+    latter is sourced from frontmatter that's known to be inconsistent across
+    write paths (some surfaces write local time with a ``Z`` suffix; the
+    watcher reads ``created`` rather than ``created_at`` and so commonly
+    leaves it empty).  File mtime is a reliable wall-clock signal for "this
+    file was just written," which is what dedup actually needs.
+
+    To bound the I/O, we order by ``rowid DESC`` (newer chunks have higher
+    rowids) and inspect at most ``fetch_limit`` rows.  In a typical
+    palinode deployment this comfortably covers a 60-minute window.
+
+    Files under ``daily/`` are excluded — they're append-only logs that
+    always overlap recent saves by construction; treating them as dedup
+    candidates would suppress every session-end after the first.
+
+    Args:
+        window_minutes: Lookback window.  Negative or zero values yield an
+            empty list (callers can disable dedup by passing 0).
+        now: Override for the current time, primarily for tests.  Defaults
+            to wall-clock UTC.
+        fetch_limit: Max number of rows to inspect (rowid-ordered).
+
+    Returns:
+        List of ``(slug, embedding)`` tuples for chunks whose source file
+        mtime is within the window.  Order is most-recent-first.  Empty
+        list on any DB error or when the window is non-positive.
+    """
+    if window_minutes <= 0:
+        return []
+
+    cutoff_ts = ((now or _utc_now()) - timedelta(minutes=window_minutes)).timestamp()
+
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            SELECT c.id, c.file_path, v.embedding
+            FROM chunks c
+            JOIN chunks_vec v ON v.id = c.id
+            ORDER BY c.rowid DESC
+            LIMIT ?
+            """,
+            (fetch_limit,),
+        )
+        rows = cursor.fetchall()
+        db.close()
+    except sqlite3.Error:
+        return []
+
+    out: list[tuple[str, list[float]]] = []
+    for row in rows:
+        file_path = row["file_path"]
+        if _is_daily_file(file_path):
+            continue
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            # File gone (deleted, renamed) — skip; can't confirm freshness
+            continue
+        if mtime < cutoff_ts:
+            continue
+        raw = row["embedding"]
+        try:
+            if isinstance(raw, (bytes, bytearray)):
+                # sqlite-vec stores embeddings as packed little-endian float32
+                count = len(raw) // 4
+                vec = list(struct.unpack(f"{count}f", raw))
+            elif isinstance(raw, str):
+                vec = json.loads(raw)
+            else:
+                vec = list(raw)
+        except (ValueError, struct.error, TypeError):
+            continue
+        if vec:
+            out.append((row["id"], vec))
+    return out
+
+
 def search_hybrid(
     query_text: str,
     query_embedding: list[float],
@@ -770,7 +862,7 @@ def search_hybrid(
         for key in sorted_keys:
             result_map[key]["score"] = rrf_scores[key] / max_score
 
-    # Ambient context boost: boost results matching caller's project context
+    # Ambient context boost (ADR-008): boost results matching caller's project context
     if context_entities and config.context.enabled and config.context.boost != 1.0:
         context_files: set[str] = set()
         for entity in context_entities:

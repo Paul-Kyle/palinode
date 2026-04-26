@@ -29,6 +29,12 @@ from pydantic import BaseModel
 
 from palinode.core import store, embedder, git_tools
 from palinode.core.config import config
+from palinode.core.defaults import (
+    SAVE_SOURCE_API_DEFAULT,
+    SAVE_SOURCE_HEADER,
+    SESSION_END_DEDUP_THRESHOLD,
+    SESSION_END_DEDUP_WINDOW_MINUTES,
+)
 
 
 logger = logging.getLogger("palinode.api")
@@ -67,7 +73,7 @@ async def lifespan(app: FastAPI):
     """Initialize database and background workers on startup."""
     store.init_db()
 
-    # Tier 2a: write-time contradiction check worker
+    # Tier 2a (ADR-004): write-time contradiction check worker
     if config.consolidation.write_time.enabled:
         try:
             from palinode.consolidation import write_time
@@ -205,6 +211,28 @@ def _normalize_entities(entities: list[str], category: str) -> list[str]:
     return normalized
 
 
+def _resolve_source(req_source: str | None, request: "Request | None") -> str:
+    """Resolve the source-surface attribution for a write.
+
+    Precedence (ADR-010 / #167):
+      1. Explicit ``source`` field in the request body — caller's intent wins.
+      2. ``X-Palinode-Source`` HTTP header — set automatically by CLI/MCP.
+      3. ``PALINODE_SOURCE`` environment variable — operator override.
+      4. ``"api"`` default — used when nothing above is set.
+    """
+    if req_source:
+        return req_source
+    if request is not None:
+        # FastAPI normalizes header names to lowercase on read; supply both
+        # spellings to be safe across stacks.
+        hdr = request.headers.get(SAVE_SOURCE_HEADER) or request.headers.get(
+            SAVE_SOURCE_HEADER.lower()
+        )
+        if hdr:
+            return hdr
+    return os.environ.get("PALINODE_SOURCE", SAVE_SOURCE_API_DEFAULT)
+
+
 def _generate_description(content: str) -> str:
     """Generate a one-line description for a memory file.
 
@@ -323,7 +351,7 @@ class SearchRequest(BaseModel):
     hybrid: bool | None = None
     date_after: str | None = None
     date_before: str | None = None
-    context: list[str] | None = None  # Entity refs for ambient context boost
+    context: list[str] | None = None  # Entity refs for ambient context boost (ADR-008)
     include_daily: bool | None = False  # Skip daily/ penalty when True (#93)
     # #141: filter by memory `type` frontmatter (one of PersonMemory, Decision,
     # ProjectSnapshot, Insight, ResearchRef, ActionItem). Independent of `category`
@@ -360,6 +388,14 @@ class SaveRequest(BaseModel):
     core: bool | None = None
     source: str | None = None
     confidence: float | None = None
+    #: Optional human-readable title.  When set, it's stored in frontmatter
+    #: and used for display in lists/search results.  ADR-010 / #166.
+    title: str | None = None
+    #: Sugar: ``project="foo"`` is equivalent to appending ``"project/foo"``
+    #: to ``entities``.  ADR-010 / #159.  If both are given and there's a
+    #: mismatch, both values land — same as supplying ``entities=["project/a",
+    #: "project/b"]`` directly.
+    project: str | None = None
 
 
 @app.get("/list")
@@ -500,7 +536,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
         effective_date_after = _compute_effective_date_after(req)
         limit = req.limit or config.search.default_limit
 
-        # Empty query → recency-only mode. Skip embedding, query chunks
+        # #141: empty query → recency-only mode. Skip embedding, query chunks
         # directly ordered by created_at desc, apply types/date_after filter.
         if not req.query.strip():
             return store.list_recent(
@@ -511,7 +547,7 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
                 limit=limit,
             )
 
-        # Augment query with project context before embedding
+        # ADR-008: Augment query with project context before embedding
         embed_query = req.query
         if req.context and config.context.enabled and config.context.embed_augment:
             # Extract project name from entity ref (e.g., "project/palinode" → "palinode")
@@ -636,7 +672,7 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
     """Persists a new memory instance chunk locally and initiates git backup sequences.
 
     Query params:
-        sync: If True, runs the write-time contradiction check (tier 2a)
+        sync: If True, runs the write-time contradiction check (tier 2a, ADR-004)
               inline and returns its result. If False (default), the check is
               enqueued for background processing and the response returns as
               soon as the file is written and git-committed.
@@ -679,7 +715,12 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
 
     # Normalize entity refs: bare strings get a category prefix.
     # e.g. "palinode" → "project/palinode", "alice" → "person/alice"
-    raw_entities = req.entities or []
+    raw_entities = list(req.entities or [])
+    # ADR-010 / #159: ``project`` is sugar for the ``project/<slug>`` entity.
+    if req.project:
+        project_ref = req.project if "/" in req.project else f"project/{req.project}"
+        if project_ref not in raw_entities:
+            raw_entities.append(project_ref)
     normalized_entities = _normalize_entities(raw_entities, category)
 
     frontmatter_dict = {
@@ -688,7 +729,11 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
         "type": req.type,
         "entities": normalized_entities,
         "content_hash": content_hash,
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # #191: write proper timezone-aware UTC ISO-8601 (`+00:00` suffix).
+        # Previously used ``time.strftime("...%Z")`` which emitted local time
+        # with a ``Z`` (UTC) marker — a mismatch that made `chunks.created_at`
+        # unreliable as a recency signal.
+        "created_at": _utc_now().isoformat()
     }
     if req.metadata:
         frontmatter_dict.update(req.metadata)
@@ -696,8 +741,12 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
         frontmatter_dict["core"] = req.core
     if req.confidence is not None:
         frontmatter_dict["confidence"] = req.confidence
+    # ADR-010 / #166: explicit ``title`` overrides metadata-supplied title.
+    if req.title:
+        frontmatter_dict["title"] = req.title
 
-    frontmatter_dict["source"] = req.source or os.environ.get("PALINODE_SOURCE", "api")
+    # ADR-010 / #167: explicit body field > X-Palinode-Source header > env > "api".
+    frontmatter_dict["source"] = _resolve_source(req.source, request)
 
     # Auto-generate description if not already provided via metadata
     if not frontmatter_dict.get("description"):
@@ -742,7 +791,7 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
 
     result: dict[str, Any] = {"file_path": file_path, "id": frontmatter_dict["id"]}
 
-    # Tier 2a: schedule write-time contradiction check.
+    # Tier 2a (ADR-004): schedule write-time contradiction check.
     # Always safe to call — returns None immediately if disabled in config.
     # Errors inside the scheduler are logged and swallowed; never propagate.
     if config.consolidation.write_time.enabled:
@@ -842,7 +891,7 @@ def status_api() -> dict[str, Any]:
         
     stats["ollama_reachable"] = ollama_reachable
 
-    # Tier 2a observability
+    # Tier 2a (ADR-004) observability
     stats["write_time_enabled"] = config.consolidation.write_time.enabled
     if config.consolidation.write_time.enabled:
         try:
@@ -1187,6 +1236,67 @@ class SessionEndRequest(BaseModel):
     duration_seconds: int | None = None
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two equally-sized vectors.
+
+    Returns 0.0 on shape mismatch or zero-magnitude inputs so the caller
+    can treat "incomparable" the same as "not similar enough."
+    """
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = 0.0
+    na = 0.0
+    nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    import math
+    return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+def _check_session_end_dedup(
+    content: str,
+    window_minutes: int = SESSION_END_DEDUP_WINDOW_MINUTES,
+    threshold: float = SESSION_END_DEDUP_THRESHOLD,
+) -> tuple[str | None, float]:
+    """Look for a recent indexed save whose embedding is near-identical to ``content`` (#126).
+
+    Returns ``(matched_slug, similarity)`` when a recent save scores at or
+    above ``threshold``; ``(None, 0.0)`` otherwise.  Failure modes — empty
+    embedding from the embedder, no recent saves, or DB error inside the
+    helper — return ``(None, 0.0)`` so the caller writes both files.
+    """
+    try:
+        new_emb = embedder.embed(content)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"session_end dedup: embed failed ({e}); writing without dedup")
+        return None, 0.0
+    if not new_emb:
+        logger.warning("session_end dedup: embedder returned empty vector; writing without dedup")
+        return None, 0.0
+
+    try:
+        recent = store.recent_save_embeddings(window_minutes)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"session_end dedup: recent_save_embeddings failed ({e}); writing without dedup")
+        return None, 0.0
+
+    best_slug: str | None = None
+    best_sim = 0.0
+    for slug, emb in recent:
+        sim = _cosine_similarity(new_emb, emb)
+        if sim > best_sim:
+            best_sim = sim
+            best_slug = slug
+
+    if best_slug is not None and best_sim >= threshold:
+        return best_slug, best_sim
+    return None, best_sim
+
+
 def _project_from_cwd(cwd: str | None) -> str | None:
     """Derive a project slug from a CWD path's basename (#145).
 
@@ -1205,11 +1315,12 @@ def _project_from_cwd(cwd: str | None) -> str | None:
 
 
 @app.post("/session-end")
-def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
+def session_end_api(req: SessionEndRequest, request: Request = None) -> dict[str, Any]:
     """Capture session outcomes to daily notes and project status files."""
     today = _utc_now().strftime("%Y-%m-%d")
     now_iso = _utc_now().isoformat().replace("+00:00", "Z")
-    source = req.source or os.environ.get("PALINODE_SOURCE", "api")
+    # ADR-010 / #167: same precedence as save_api — explicit > header > env > default.
+    source = _resolve_source(req.source, request)
 
     # Auto-derive project from cwd if caller didn't pass one (#145).
     project = req.project or _project_from_cwd(req.cwd)
@@ -1267,39 +1378,52 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
                 f.write(f"\n- [{today}] {one_liner}\n")
             status_file = f"projects/{project}-status.md"
 
+    # Semantic dedup against recent saves (#126). The daily note + project
+    # status file are append-only logs we always write — only the indexed
+    # individual file is suppressed when a near-duplicate already exists,
+    # because that file's value is the standalone embedding/searchable record
+    # which we'd otherwise have twice for the same content.
+    deduplicated_against, dedup_similarity = _check_session_end_dedup(session_entry)
+
     # Also save as an individual indexed memory file (M0: dual-write).
     # This gives each session-end its own frontmatter, entities, description,
     # and embedding — searchable and retractable independently.
     individual_file = None
-    try:
-        short_hash = hashlib.sha256(req.summary.encode()).hexdigest()[:8]
-        # Pass structured metadata through to the indexed file's frontmatter so
-        # it's queryable later (#145). Only include fields the caller set.
-        extra_meta: dict[str, Any] = {}
-        if req.harness:
-            extra_meta["harness"] = req.harness
-        if req.cwd:
-            extra_meta["cwd"] = req.cwd
-        if req.model:
-            extra_meta["model"] = req.model
-        if req.trigger:
-            extra_meta["trigger"] = req.trigger
-        if req.session_id:
-            extra_meta["session_id"] = req.session_id
-        if req.duration_seconds is not None:
-            extra_meta["duration_seconds"] = req.duration_seconds
-        save_req = SaveRequest(
-            content=session_entry,
-            type="ProjectSnapshot" if project else "Insight",
-            slug=f"session-end-{today}-{project}-{short_hash}" if project else f"session-end-{today}-{short_hash}",
-            entities=[f"project/{project}"] if project else [],
-            source=source,
-            metadata=extra_meta or None,
+    if deduplicated_against is not None:
+        logger.info(
+            f"session_end dedup: matched {deduplicated_against} (sim={dedup_similarity:.2f}) "
+            f"— skipping individual file"
         )
-        save_result = save_api(save_req)
-        individual_file = save_result.get("file_path")
-    except Exception as e:
-        logger.error(f"Individual session-end file save failed (non-fatal): {e}")
+    else:
+        try:
+            short_hash = hashlib.sha256(req.summary.encode()).hexdigest()[:8]
+            # Pass structured metadata through to the indexed file's frontmatter so
+            # it's queryable later (#145). Only include fields the caller set.
+            extra_meta: dict[str, Any] = {}
+            if req.harness:
+                extra_meta["harness"] = req.harness
+            if req.cwd:
+                extra_meta["cwd"] = req.cwd
+            if req.model:
+                extra_meta["model"] = req.model
+            if req.trigger:
+                extra_meta["trigger"] = req.trigger
+            if req.session_id:
+                extra_meta["session_id"] = req.session_id
+            if req.duration_seconds is not None:
+                extra_meta["duration_seconds"] = req.duration_seconds
+            save_req = SaveRequest(
+                content=session_entry,
+                type="ProjectSnapshot" if project else "Insight",
+                slug=f"session-end-{today}-{project}-{short_hash}" if project else f"session-end-{today}-{short_hash}",
+                entities=[f"project/{project}"] if project else [],
+                source=source,
+                metadata=extra_meta or None,
+            )
+            save_result = save_api(save_req)
+            individual_file = save_result.get("file_path")
+        except Exception as e:
+            logger.error(f"Individual session-end file save failed (non-fatal): {e}")
 
     # Git commit (covers daily + status + individual file if save_api didn't commit)
     if config.git.auto_commit:
@@ -1316,12 +1440,15 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
         except Exception as e:
             logger.error(f"Git commit failed for session-end: {e}")
 
-    return {
+    response: dict[str, Any] = {
         "daily_file": f"daily/{today}.md",
         "status_file": status_file,
         "individual_file": individual_file,
         "entry": session_entry,
     }
+    if deduplicated_against is not None:
+        response["deduplicated_against"] = deduplicated_against
+    return response
 
 
 @app.get("/git-stats")

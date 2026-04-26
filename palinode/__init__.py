@@ -11,4 +11,9 @@ Components:
     mcp.py      — MCP server for Claude Code integration
     cli.py      — Command-line interface
 """
-__version__ = "0.7.0"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("palinode")
+except PackageNotFoundError:  # pragma: no cover — only when running from a non-installed checkout
+    __version__ = "0.0.0+unknown"

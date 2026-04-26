@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import textwrap
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -235,7 +236,21 @@ def test_migration_frontmatter_fields(
 def test_deduplication_skips_identical_content(
     memory_md_file: Path, fake_memory_dir: Path
 ) -> None:
-    with patch("palinode.migration.openclaw.config") as mock_cfg:
+    # Freeze datetime.now so both runs produce byte-identical frontmatter
+    # (the dedup hash is over the full file content, including the
+    # `last_updated` timestamp — a real wall-clock tick between the two
+    # calls would defeat dedup and flake the test).
+    from datetime import datetime as _real_datetime
+
+    fixed_now = _real_datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    class _FrozenDatetime(_real_datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return fixed_now if tz is None else fixed_now.astimezone(tz)
+
+    with patch("palinode.migration.openclaw.config") as mock_cfg, \
+         patch("palinode.migration.openclaw.datetime", _FrozenDatetime):
         mock_cfg.memory_dir = str(fake_memory_dir)
         result1 = run_migration(str(memory_md_file), dry_run=False)
         result2 = run_migration(str(memory_md_file), dry_run=False)

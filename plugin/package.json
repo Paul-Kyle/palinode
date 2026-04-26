@@ -7,6 +7,15 @@
     "@sinclair/typebox": "0.34.47"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "pretest": "python3 ../scripts/dump-parity-registry.py > parity-registry.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }

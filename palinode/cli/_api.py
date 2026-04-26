@@ -1,35 +1,104 @@
 import os
 import httpx
 from palinode.core.config import config
+from palinode.core.defaults import SAVE_SOURCE_HEADER
+
+# Re-exported for CLI commands that need to catch API errors without
+# importing httpx directly (ADR-010: HTTP-layer monopoly).
+HTTPStatusError = httpx.HTTPStatusError
+RequestError = httpx.RequestError
+
 
 class PalinodeAPI:
     def __init__(self):
         self.base_url = os.environ.get(
-            "PALINODE_API", 
-            f"http://{config.services.api.host}:{config.services.api.port}"
+            "PALINODE_API",
+            f"http://{config.services.api.host}:{config.services.api.port}",
         )
-        self.client = httpx.Client(base_url=self.base_url, timeout=30.0)
+        # ADR-010 / #167: every request carries the surface attribution as
+        # a header.  The API uses this when the body doesn't explicitly set
+        # `source`, giving consistent provenance without each surface having
+        # to thread a source default through every call site.
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            timeout=30.0,
+            headers={SAVE_SOURCE_HEADER: "cli"},
+        )
 
-    def search(self, query: str, limit: int = 3, category: str = None, context: list[str] = None):
+    def search(
+        self,
+        query: str,
+        limit: int = 3,
+        category: str | None = None,
+        context: list[str] | None = None,
+        threshold: float | None = None,
+        since_days: int | None = None,
+        types: list[str] | None = None,
+        date_after: str | None = None,
+        date_before: str | None = None,
+        include_daily: bool | None = None,
+    ):
+        # ADR-010 / #163: forward the full canonical search surface.
+        # Non-None params land in the body verbatim; None means "API default".
         payload: dict = {"query": query, "limit": limit}
         if category:
             payload["category"] = category
         if context:
             payload["context"] = context
+        if threshold is not None:
+            payload["threshold"] = threshold
+        if since_days is not None:
+            payload["since_days"] = since_days
+        if types:
+            payload["types"] = list(types)
+        if date_after:
+            payload["date_after"] = date_after
+        if date_before:
+            payload["date_before"] = date_before
+        if include_daily:
+            payload["include_daily"] = True
 
         response = self.client.post("/search", json=payload)
         response.raise_for_status()
         return response.json()
 
-    def save(self, content: str, memory_type: str, entities: list[str] = None, title: str = None, source: str = None, sync: bool = False):
-        payload = {
+    def save(
+        self,
+        content: str,
+        memory_type: str,
+        entities: list[str] = None,
+        title: str | None = None,
+        source: str | None = None,
+        sync: bool = False,
+        project: str | None = None,
+        slug: str | None = None,
+        core: bool | None = None,
+        confidence: float | None = None,
+        metadata: dict | None = None,
+    ):
+        payload: dict = {
             "content": content,
             "type": memory_type,
             "entities": entities or [],
-            "title": title
         }
+        # Only include optional fields when set so the server can apply its
+        # own defaults vs. seeing an explicit ``None``.
+        if title is not None:
+            payload["title"] = title
         if source:
             payload["source"] = source
+        if project:
+            # ADR-010 / #159: project is API-side sugar; the API expands it
+            # into entities.
+            payload["project"] = project
+        if slug is not None:
+            payload["slug"] = slug
+        if core is not None:
+            payload["core"] = core
+        if confidence is not None:
+            payload["confidence"] = confidence
+        if metadata is not None:
+            payload["metadata"] = metadata
         params = {"sync": "true"} if sync else None
         response = self.client.post("/save", json=payload, params=params)
         response.raise_for_status()
@@ -37,6 +106,116 @@ class PalinodeAPI:
 
     def get_status(self):
         response = self.client.get("/status")
+        response.raise_for_status()
+        return response.json()
+
+    def read(self, file_path: str, meta: bool = False):
+        """Read a memory file via the API.
+
+        Returns ``{file, content, size_bytes, [frontmatter]}``.  When
+        ``meta=True``, ``frontmatter`` is a parsed dict.  ADR-010 / #168.
+        """
+        params: dict = {"file_path": file_path}
+        if meta:
+            params["meta"] = "true"
+        response = self.client.get("/read", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def list_files(self, category: str | None = None, core_only: bool | None = None):
+        """List memory files via the API.  ADR-010 / #170."""
+        params: dict = {}
+        if category:
+            params["category"] = category
+        if core_only:
+            params["core_only"] = "true"
+        response = self.client.get("/list", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def lint(self):
+        """Run the memory lint pass via the API.  ADR-010 / #170.
+
+        Raises ``RequestError`` if the API is unreachable; the CLI catches
+        this to fall back to a local in-process lint pass.
+        """
+        response = self.client.post("/lint", timeout=30.0)
+        response.raise_for_status()
+        return response.json()
+
+    def list_prompts(self, task: str | None = None):
+        """List stored prompt versions.  ADR-010 / #170."""
+        params: dict = {}
+        if task:
+            params["task"] = task
+        response = self.client.get("/prompts", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def get_prompt(self, name: str):
+        """Read a specific prompt by name.  ADR-010 / #170."""
+        response = self.client.get(f"/prompts/{name}")
+        response.raise_for_status()
+        return response.json()
+
+    def activate_prompt(self, name: str):
+        """Activate a prompt version.  ADR-010 / #170."""
+        response = self.client.post(f"/prompts/{name}/activate")
+        response.raise_for_status()
+        return response.json()
+
+    def ingest_inbox(self):
+        """Process files in the inbox directory.  ADR-010 / #170."""
+        response = self.client.post("/ingest", timeout=60.0)
+        response.raise_for_status()
+        return response.json()
+
+    def ingest_url(self, url: str, name: str | None = None):
+        """Fetch and save a URL as a research reference.  ADR-010 / #170."""
+        payload: dict = {"url": url}
+        if name:
+            payload["name"] = name
+        response = self.client.post("/ingest-url", json=payload, timeout=60.0)
+        response.raise_for_status()
+        return response.json()
+
+    def session_end(
+        self,
+        summary: str,
+        decisions: list[str] | None = None,
+        blockers: list[str] | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        harness: str | None = None,
+        cwd: str | None = None,
+        model: str | None = None,
+        trigger: str | None = None,
+        session_id: str | None = None,
+        duration_seconds: int | None = None,
+    ):
+        """Capture session outcomes via the API.  ADR-010 / #170 (#145 fields)."""
+        payload: dict = {"summary": summary}
+        if decisions:
+            payload["decisions"] = list(decisions)
+        if blockers:
+            payload["blockers"] = list(blockers)
+        if project:
+            payload["project"] = project
+        if source:
+            payload["source"] = source
+        if harness:
+            payload["harness"] = harness
+        if cwd:
+            payload["cwd"] = cwd
+        if model:
+            payload["model"] = model
+        if trigger:
+            payload["trigger"] = trigger
+        if session_id:
+            payload["session_id"] = session_id
+        if duration_seconds is not None:
+            payload["duration_seconds"] = duration_seconds
+        response = self.client.post("/session-end", json=payload, timeout=30.0)
         response.raise_for_status()
         return response.json()
 
@@ -54,12 +233,28 @@ class PalinodeAPI:
         response.raise_for_status()
         return response.json()
 
-    def trigger_add(self, description: str, memory_file: str, threshold: float = 0.75):
+    def trigger_add(
+        self,
+        description: str,
+        memory_file: str,
+        threshold: float | None = None,
+        cooldown_hours: int | None = None,
+        trigger_id: str | None = None,
+    ):
+        # ADR-010 / #165: forward all four canonical params.  Defaults live
+        # in palinode.core.defaults so the CLI can show them in --help.  We
+        # only include them in the body when non-None so the API still
+        # receives explicit user intent vs implicit defaults.
         payload: dict = {
             "description": description,
             "memory_file": memory_file,
-            "threshold": threshold,
         }
+        if threshold is not None:
+            payload["threshold"] = threshold
+        if cooldown_hours is not None:
+            payload["cooldown_hours"] = cooldown_hours
+        if trigger_id is not None:
+            payload["trigger_id"] = trigger_id
         response = self.client.post("/triggers", json=payload)
         response.raise_for_status()
         return response.json()

@@ -1,6 +1,10 @@
 import click
 from palinode.cli._api import api_client
 from palinode.cli._format import console, print_result, get_default_format, OutputFormat
+from palinode.core.defaults import (
+    TRIGGER_COOLDOWN_HOURS_DEFAULT,
+    TRIGGER_THRESHOLD_DEFAULT,
+)
 from rich.table import Table
 
 @click.group()
@@ -11,12 +15,35 @@ def trigger():
 @trigger.command(name="add")
 @click.argument("description")
 @click.option("--file", "memory_file", required=True, help="Memory file to trigger")
-@click.option("--threshold", type=float, default=0.75, help="Similarity threshold (0.0 to 1.0)")
+@click.option(
+    "--threshold",
+    type=float,
+    default=TRIGGER_THRESHOLD_DEFAULT,
+    help=f"Similarity threshold (0.0 to 1.0; default {TRIGGER_THRESHOLD_DEFAULT})",
+)
+@click.option(
+    "--cooldown-hours",
+    type=int,
+    default=TRIGGER_COOLDOWN_HOURS_DEFAULT,
+    help=f"Hours to wait between firings of the same trigger "
+         f"(default {TRIGGER_COOLDOWN_HOURS_DEFAULT})",
+)
+@click.option(
+    "--trigger-id",
+    "trigger_id",
+    help="Stable trigger ID (UUID or slug).  Useful for re-creation / dedup.",
+)
 @click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
-def trigger_add(description, memory_file, threshold, fmt):
+def trigger_add(description, memory_file, threshold, cooldown_hours, trigger_id, fmt):
     """Register a new auto-surface trigger."""
     try:
-        result = api_client.trigger_add(description, memory_file, threshold)
+        result = api_client.trigger_add(
+            description,
+            memory_file,
+            threshold=threshold,
+            cooldown_hours=cooldown_hours,
+            trigger_id=trigger_id,
+        )
         
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()
         if output_fmt == OutputFormat.JSON:

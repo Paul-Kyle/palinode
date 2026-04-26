@@ -1,9 +1,11 @@
-"""Scope chain resolution (Layer 1 of scoped memory).
+"""ADR-009 Layer 1: scope chain resolution.
 
 Build a ScopeChain from config + env + caller-supplied project/session, to be
-consumed by scope-filtered search and the context prime endpoint. This module
-is pure resolution — no I/O, no DB, no filtering. Isolating it here keeps
-subsequent layers easy to test.
+consumed by scope-filtered search (Slice 3) and the context prime endpoint
+(Slice 4). This module is pure resolution — no I/O, no DB, no filtering.
+Isolating it here keeps subsequent slices easy to test.
+
+See ADR-009 §3.1-3.2 for the hierarchy and auto-detection rules.
 """
 from __future__ import annotations
 
@@ -53,8 +55,8 @@ def resolve_scope_chain(
     """Resolve the scope chain for the current session.
 
     ``project`` should be the caller-resolved project entity name (typically
-    supplied by the ambient-context detection). Pass ``None`` when the caller
-    has no project signal.
+    supplied by the ADR-008 ambient-context detection). Pass ``None`` in
+    pre-ADR-008 setups or when the caller has no project signal.
 
     ``session_id`` is the caller-generated session identifier. Pass ``None``
     when session-level scoping is not in use.

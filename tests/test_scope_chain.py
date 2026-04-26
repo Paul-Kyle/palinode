@@ -113,7 +113,7 @@ def test_resolve_scope_chain_multi_agent(monkeypatch):
 
 def test_resolve_scope_chain_project_passed_by_caller(monkeypatch):
     """The project level comes from the caller (ADR-008 detection), not config env."""
-    cfg = _fresh_config(monkeypatch, env={"PALINODE_MEMBER": "paul"})
+    cfg = _fresh_config(monkeypatch, env={"PALINODE_MEMBER": "alice"})
     a = resolve_scope_chain(cfg, project="palinode")
     b = resolve_scope_chain(cfg, project="other-project")
     assert "project/palinode" in a.as_list()

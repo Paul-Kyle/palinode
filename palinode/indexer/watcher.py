@@ -162,7 +162,10 @@ class PalinodeHandler(FileSystemEventHandler):
                 "category": category,
                 "content": sec["content"],
                 "metadata": metadata,
-                "created_at": metadata.get("created", ""),
+                # #191: producers (save_api, consolidation, ingest, openclaw,
+                # mem0_generate) write the key as ``created_at`` — historical
+                # ``"created"`` read here always returned ``""``.
+                "created_at": metadata.get("created_at", ""),
                 "last_updated": metadata.get("last_updated", ""),
                 "embedding": emb
             })

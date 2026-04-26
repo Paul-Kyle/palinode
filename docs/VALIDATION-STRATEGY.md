@@ -66,12 +66,12 @@ Skipping a layer is a yellow flag. Skipping L4 because "it's hard to automate" i
 
 | Layer | Status | Where |
 |---|---|---|
-| L1 | Partial | Existing pytest suite covers tool exit codes via `tests/test_session_end.py` and `tests/test_cli_init.py` |
-| L2 | Partial | Same tests assert frontmatter shape and file existence |
-| L3 | **Gap** — see [#41](https://github.com/phasespace-labs/palinode/issues/41) | Integration test for end-to-end `/wrap` → `/clear` → recall is on the roadmap |
-| L4 | **Gap** — see [#42](https://github.com/phasespace-labs/palinode/issues/42) | Automated LLM-in-the-loop test is on the roadmap |
+| L1 | Covered | `tests/test_session_end.py`, `tests/test_cli_init.py`, and the L1 case in `tests/integration/test_session_end_e2e_l1_l3.py` |
+| L2 | Covered | Same suites — frontmatter shape, file existence, daily-note + project-status content |
+| L3 | Covered | `tests/integration/test_session_end_e2e_l1_l3.py` — fresh `TestClient` issues `POST /search` against the on-disk SQLite DB written by the CLI's dual-write |
+| L4 | **Gap** — see [`docs/L4-BEHAVIORAL-TESTING-DESIGN.md`](./L4-BEHAVIORAL-TESTING-DESIGN.md) and [#42](https://github.com/phasespace-labs/palinode/issues/42) | Automated LLM-in-the-loop test design is sketched but not yet implemented |
 
-Until #41 and #42 land, L3 and L4 are manual on every cross-session-feature PR. Document the manual evidence in the PR; don't assume future you will remember what you ran.
+Until L4 lands, L4 is manual on every cross-session-feature PR. Document the manual evidence in the PR; don't assume future you will remember what you ran.
 
 ## Related
 

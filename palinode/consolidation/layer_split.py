@@ -115,7 +115,10 @@ def split_file(file_path: str) -> dict:
     id_meta = dict(metadata)
     id_meta['core'] = True
     id_meta['layer'] = 'identity'
-    id_meta['last_updated'] = _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    # #193: emit timezone-aware UTC ISO-8601 (``+00:00``) rather than
+    # ``strftime("...Z")``, which silently drops sub-second precision and
+    # diverges from the project standard set by #192.
+    id_meta['last_updated'] = _utc_now().isoformat()
     id_content = f"---\n{yaml.dump(id_meta, default_flow_style=False)}---\n\n"
     id_content += "\n\n".join(identity_sections)
     
@@ -132,7 +135,7 @@ def split_file(file_path: str) -> dict:
             'core': True,
             'layer': 'status',
             'parent': id_meta.get('id', name),
-            'last_updated': _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'last_updated': _utc_now().isoformat(),  # #193
         }
         if metadata.get('summary'):
             st_meta['summary'] = f"Current status: {metadata['summary'][:80]}"
@@ -155,7 +158,7 @@ def split_file(file_path: str) -> dict:
             'core': False,
             'layer': 'history',
             'parent': id_meta.get('id', name),
-            'created_at': _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'created_at': _utc_now().isoformat(),  # #193
         }
         if metadata.get('entities'):
             h_meta['entities'] = metadata['entities']
