@@ -116,6 +116,11 @@ class PalinodeAPI:
         response.raise_for_status()
         return response.json()
 
+    def migrate_mem0(self):
+        response = self.client.post("/migrate/mem0", timeout=600.0)
+        response.raise_for_status()
+        return response.json()
+
     def blame(self, file_path: str, search: str = None):
         params: dict = {}
         if search:

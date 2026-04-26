@@ -39,8 +39,15 @@ with `PALINODE_API_URL` if you run it on another host.
 
 `/clear` in Claude Code resets the conversation context. Without a hook, every
 insight, decision, and bug root cause from that session vanishes. The SessionEnd
-hook fires on `/clear` (matcher: `clear`), so even if you forget to call
-`palinode_session_end` manually, a fallback snapshot is captured.
+hook captures a fallback snapshot for `/clear` and a few other lifecycle
+reasons, so even if you forget to call `palinode_session_end` manually, the
+session isn't lost.
+
+The hook is registered without a `matcher` field — Claude Code's hook layer
+fires it on every SessionEnd reason, and the script itself filters down to the
+reasons worth capturing (`clear`, `logout`, `prompt_input_exit`, `other` by
+default). The script-side filter is set this way so users can adjust scope via
+the `PALINODE_HOOK_REASONS` env var without editing JSON. See "Tuning" below.
 
 For the best record, have the agent call `palinode_session_end` explicitly
 *before* `/clear` runs — the hook's fallback only has the transcript to work
@@ -55,6 +62,7 @@ Environment variables the hook respects:
 |----------|---------|---------|
 | `PALINODE_API_URL` | `http://localhost:6340` | Where to POST the capture |
 | `PALINODE_HOOK_MIN_MESSAGES` | `3` | Minimum user messages before capture fires (skips trivial sessions) |
+| `PALINODE_HOOK_REASONS` | `clear logout prompt_input_exit other` | Space-separated SessionEnd reasons to capture on. Narrow to e.g. `"clear"` for /clear-only, or extend with `resume` / `bypass_permissions_disabled` if you want to capture those lifecycle events too |
 
 ## Fail-silent
 

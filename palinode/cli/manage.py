@@ -41,3 +41,13 @@ def bootstrap_ids(fmt):
         print_result(result, fmt=OutputFormat(fmt) if fmt else get_default_format())
     except Exception as e:
         console.print(f"[red]Error bootstrapping IDs: {str(e)}[/red]")
+
+@click.command(name="migrate-mem0")
+@click.option("--format", "fmt", type=click.Choice(["json", "text"]), help="Output format")
+def migrate_mem0(fmt):
+    """Backfill from Mem0/Qdrant."""
+    try:
+        result = api_client.migrate_mem0()
+        print_result(result, fmt=OutputFormat(fmt) if fmt else get_default_format())
+    except Exception as e:
+        console.print(f"[red]Error migrating: {str(e)}[/red]")

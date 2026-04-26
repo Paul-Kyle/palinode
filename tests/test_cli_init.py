@@ -12,8 +12,12 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import subprocess
+import tempfile
+
 from palinode.cli import main
 from palinode.cli.init import (
+    HOOK_SCRIPT,
     PS_COMMAND_BODY,
     WRAP_COMMAND_BODY,
     _slugify,
@@ -69,6 +73,96 @@ def test_wrap_command_is_deterministic():
 def test_ps_and_wrap_are_different():
     """The two commands must be distinct operations, not aliases."""
     assert PS_COMMAND_BODY != WRAP_COMMAND_BODY
+
+
+# ---- Hook script message-count extraction (#151) ------------------------
+
+
+def test_hook_script_count_extraction_uses_safe_pattern():
+    """`grep -c` always prints an integer; `|| echo "0"` would double-print
+    on empty match, producing "0\\n0" which broke the integer test in #151.
+    Guard against re-introducing the bug with a string check."""
+    # Old (broken) pattern must be absent
+    assert 'grep -c \'.\' 2>/dev/null || echo "0"' not in HOOK_SCRIPT
+    assert 'grep -c "." 2>/dev/null || echo "0"' not in HOOK_SCRIPT
+    # New pattern must be present (single integer guarantee + safe default)
+    assert "grep -c '.' || true" in HOOK_SCRIPT
+    assert "MSG_COUNT=${MSG_COUNT:-0}" in HOOK_SCRIPT
+
+
+def test_hook_script_drops_empty_transcript(tmp_path):
+    """Empty transcript ⇒ MSG_COUNT=0 ⇒ filter drops, no save attempted.
+    Behavioral test extracted from the script's exact extraction line, run
+    against a real bash subprocess so any shell-quoting regression is caught."""
+    transcript = tmp_path / "empty.jsonl"
+    transcript.write_text("")
+    snippet = (
+        f'set -euo pipefail; '
+        f'TRANSCRIPT_PATH={transcript}; '
+        f'MSG_COUNT=$(jq -r \'select(.type == "user") | .message.content // empty\' '
+        f'  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c \'.\' || true); '
+        f'MSG_COUNT=${{MSG_COUNT:-0}}; '
+        f'echo "result=$MSG_COUNT"; '
+        f'[ "$MSG_COUNT" -lt 3 ] && echo "drops" || echo "saves"'
+    )
+    proc = subprocess.run(["/bin/bash", "-c", snippet], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "result=0" in proc.stdout
+    assert "drops" in proc.stdout
+
+
+def test_hook_script_counts_user_messages_correctly(tmp_path):
+    """Five user messages mixed with assistant lines ⇒ count=5 ⇒ saves."""
+    transcript = tmp_path / "mixed.jsonl"
+    transcript.write_text(
+        '{"type":"user","message":{"content":"hi"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n'
+        '{"type":"user","message":{"content":"how"}}\n'
+        '{"type":"user","message":{"content":"are"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"fine"}]}}\n'
+        '{"type":"user","message":{"content":"you"}}\n'
+        '{"type":"user","message":{"content":"?"}}\n'
+    )
+    snippet = (
+        f'set -euo pipefail; '
+        f'TRANSCRIPT_PATH={transcript}; '
+        f'MSG_COUNT=$(jq -r \'select(.type == "user") | .message.content // empty\' '
+        f'  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c \'.\' || true); '
+        f'MSG_COUNT=${{MSG_COUNT:-0}}; '
+        f'echo "result=$MSG_COUNT"'
+    )
+    proc = subprocess.run(["/bin/bash", "-c", snippet], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "result=5" in proc.stdout
+
+
+# ---- Hook script reason filter (#149) -----------------------------------
+
+
+def test_hook_script_has_reason_case_guard():
+    """The script must filter SessionEnd by reason — settings.json carries
+    no `matcher`, so this script-side guard is the only thing keeping
+    unwanted reasons (e.g. `resume`, `bypass_permissions_disabled`) from
+    triggering captures. If this assertion breaks because someone removed
+    the guard, you have re-introduced #149."""
+    assert "ALLOWED_REASONS=" in HOOK_SCRIPT
+    assert "PALINODE_HOOK_REASONS:-" in HOOK_SCRIPT
+    # case-statement word-boundary match on space-padded allowlist
+    assert 'case " $ALLOWED_REASONS " in' in HOOK_SCRIPT
+    assert '*" $SOURCE_REASON "*' in HOOK_SCRIPT
+
+
+def test_hook_script_default_reason_allowlist_is_broad():
+    """Default allowlist captures clear, logout, exit, and normal exits.
+    Skips `resume` (old session content typically already saved before resume)
+    and `bypass_permissions_disabled` (state change, not lifecycle end). If
+    you tighten or broaden the default, update both this assertion and the
+    rationale captured in #149's resolution comment."""
+    # The default value should appear verbatim in the script
+    assert ":-clear logout prompt_input_exit other}" in HOOK_SCRIPT
+    # And NOT include the two we deliberately skip
+    assert ":-clear logout prompt_input_exit other resume" not in HOOK_SCRIPT
+    assert "bypass_permissions_disabled}" not in HOOK_SCRIPT
 
 
 # ---- Scaffolding flow ---------------------------------------------------

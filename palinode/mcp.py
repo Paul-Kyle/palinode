@@ -29,6 +29,7 @@ Usage (Claude Code / claude_desktop_config.json):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -48,6 +49,25 @@ logging.basicConfig(level=logging.WARNING)  # quiet — don't pollute stdio
 
 server = Server("palinode")
 _audit = AuditLogger(config.memory_dir, config.audit)
+
+
+def _coerce_str_array(value: Any) -> Any:
+    """Tolerate JSON-encoded array strings from MCP clients that double-encode.
+
+    Some MCP transports/clients serialize array arguments as JSON strings
+    (e.g. ``'["a","b"]'``) instead of native arrays. FastAPI's Pydantic
+    validation rejects those with "expected array, received string". This
+    helper decodes the string form when it's clearly a JSON array; otherwise
+    it returns ``value`` unchanged so native lists pass through.
+    """
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+        if isinstance(decoded, list):
+            return decoded
+    return value
 
 
 def _resolve_context() -> list[str] | None:
@@ -139,6 +159,28 @@ def _format_results(results: list[dict[str, Any]]) -> str:
         fresh_label = f" ✓ {freshness}" if freshness == "valid" else (f" ⚠ {freshness}" if freshness == "stale" else "")
         parts.append(f"[{rel}] ({score_pct}% match){fresh_label}\n{r.get('content', '').strip()}")
     return "\n\n---\n\n".join(parts)
+
+
+def _resolve_save_type(arg_type: str | None, arg_ps: bool | None) -> str:
+    """Resolve the effective `type` for palinode_save (#136).
+
+    Either ``arg_type`` (one of the enum values) or ``arg_ps=True``
+    (ProjectSnapshot shortcut) must be set. ``arg_ps=True`` combined with a
+    ``type`` other than ``"ProjectSnapshot"`` is a conflict and raises.
+    """
+    if arg_ps and arg_type and arg_type != "ProjectSnapshot":
+        raise ValueError(
+            f"ps=true conflicts with type='{arg_type}' — "
+            "the ps shortcut is only for ProjectSnapshot memories."
+        )
+    if arg_ps:
+        return "ProjectSnapshot"
+    if arg_type:
+        return arg_type
+    raise ValueError(
+        "must specify either 'type' (one of the enum values) "
+        "or 'ps=true' (shortcut for ProjectSnapshot)."
+    )
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
@@ -242,7 +284,9 @@ async def list_tools() -> list[types.Tool]:
             name="palinode_save",
             description=(
                 "Save a memory to Palinode. Use for important facts, decisions, insights, "
-                "or project updates worth remembering across sessions."
+                "or project updates worth remembering across sessions. Provide either "
+                "`type` (one of the enum values) or `ps=true` for the ProjectSnapshot "
+                "shortcut — exactly one is required."
             ),
             inputSchema={
                 "type": "object",
@@ -253,8 +297,12 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "type": {
                         "type": "string",
-                        "description": "Memory type",
+                        "description": "Memory type. Required unless `ps=true` is given.",
                         "enum": ["PersonMemory", "Decision", "ProjectSnapshot", "Insight", "ResearchRef", "ActionItem"],
+                    },
+                    "ps": {
+                        "type": "boolean",
+                        "description": "Shorthand for type=ProjectSnapshot — matches the CLI `--ps` flag and the `/ps` slash command. If true, `type` may be omitted (or set to ProjectSnapshot redundantly); other type values conflict and error.",
                     },
                     "slug": {
                         "type": "string",
@@ -274,7 +322,7 @@ async def list_tools() -> list[types.Tool]:
                         "description": "Source surface that created this memory (e.g., 'claude-code', 'cursor', 'api'). Auto-detected if omitted.",
                     },
                 },
-                "required": ["content", "type"],
+                "required": ["content"],
             },
             annotations=types.ToolAnnotations(
                 title="Save Memory",
@@ -664,9 +712,18 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── save ──────────────────────────────────────────────────────────
         elif name == "palinode_save":
+            # Resolve memory type from either explicit `type` or `ps=true`
+            # shortcut (parity with CLI `palinode save --ps`, #136).
+            try:
+                resolved_type = _resolve_save_type(
+                    arguments.get("type"), arguments.get("ps")
+                )
+            except ValueError as e:
+                return _text(f"Error: {e}")
+
             body = {
                 "content": arguments["content"],
-                "type": arguments["type"],
+                "type": resolved_type,
                 "source": arguments.get("source", "mcp"),
             }
             if arguments.get("slug"):
@@ -674,7 +731,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
             if arguments.get("core") is not None:
                 body["core"] = arguments["core"]
             if arguments.get("entities"):
-                body["entities"] = arguments["entities"]
+                body["entities"] = _coerce_str_array(arguments["entities"])
 
             resp = await _post("/save", json=body)
             if resp.status_code != 200:
@@ -720,7 +777,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── entities ──────────────────────────────────────────────────────
         elif name == "palinode_entities":
-            import json
             entity_ref = arguments.get("entity_ref")
             if entity_ref:
                 resp = await _get(f"/entities/{entity_ref}")
@@ -732,7 +788,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── consolidate ───────────────────────────────────────────────────
         elif name == "palinode_consolidate":
-            import json
             resp = await _post("/consolidate", timeout=300.0)
             if resp.status_code != 200:
                 return _text(f"Consolidation failed: {resp.text}")
@@ -762,7 +817,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
         elif name == "palinode_diff":
             days = int(arguments.get("days", 7))
             params = {"days": str(days)}
-            paths = arguments.get("paths")
+            paths = _coerce_str_array(arguments.get("paths"))
             if paths:
                 params["paths"] = ",".join(paths)
             resp = await _get("/diff", params=params)
@@ -839,9 +894,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
         elif name == "palinode_session_end":
             body: dict[str, Any] = {"summary": arguments.get("summary", "")}
             if arguments.get("decisions"):
-                body["decisions"] = arguments["decisions"]
+                body["decisions"] = _coerce_str_array(arguments["decisions"])
             if arguments.get("blockers"):
-                body["blockers"] = arguments["blockers"]
+                body["blockers"] = _coerce_str_array(arguments["blockers"])
             if arguments.get("project"):
                 body["project"] = arguments["project"]
             if arguments.get("source"):
@@ -856,7 +911,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── lint ──────────────────────────────────────────────────────────
         elif name == "palinode_lint":
-            import json
             resp = await _post("/lint", timeout=120.0)
             if resp.status_code != 200:
                 return _text(f"Lint failed: {resp.text}")
@@ -864,7 +918,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
         # ── prompt ────────────────────────────────────────────────────────
         elif name == "palinode_prompt":
-            import json as _json
             action = arguments.get("action", "list")
 
             if action == "list":

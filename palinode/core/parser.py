@@ -3,9 +3,18 @@ Palinode Markdown Parse Utilities
 """
 from __future__ import annotations
 
+import logging
+import os
 import frontmatter
 import re
 from typing import Any
+
+
+logger = logging.getLogger("palinode.parser")
+
+# ADR-009 §3.3: allowed values for the `visibility` frontmatter field.
+VALID_VISIBILITIES: tuple[str, ...] = ("inherited", "private", "restricted")
+DEFAULT_VISIBILITY: str = "inherited"
 
 
 def slugify(text: str) -> str:
@@ -120,3 +129,77 @@ def parse_markdown(content: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
         sections[0]["content"] = cq_prefix + sections[0]["content"]
 
     return metadata, sections
+
+
+# ── ADR-009 §3.3: scope frontmatter parsing ───────────────────────────────
+
+
+def _default_scope_from_path(file_path: str) -> str | None:
+    """Infer a default scope entity ref from a memory file's location.
+
+    Per ADR-009 §3.3 / §7: a memory file with no explicit ``scope`` frontmatter
+    defaults to ``project/<directory>`` where ``<directory>`` is the
+    immediate parent directory name (e.g. ``decisions/foo.md`` →
+    ``project/decisions``). Returns ``None`` when no parent directory name
+    can be determined (e.g. a bare filename or empty string), which lets the
+    caller decide how to handle a path-less parse.
+    """
+    if not file_path:
+        return None
+    parent = os.path.basename(os.path.dirname(file_path))
+    if not parent:
+        return None
+    return f"project/{parent}"
+
+
+def parse_scope(
+    metadata: dict[str, Any],
+    file_path: str | None = None,
+) -> dict[str, Any]:
+    """Extract scope, visibility, and access from frontmatter (ADR-009 §3.3).
+
+    Returns a dict with the keys ``scope`` (str | None), ``visibility``
+    (str, one of :data:`VALID_VISIBILITIES`), and ``access`` (list[str]).
+
+    Defaults:
+      - ``scope``: the value of ``metadata['scope']`` if present, else the
+        directory-inferred default (``project/<parent-dir>``) when
+        ``file_path`` is given, else ``None``.
+      - ``visibility``: ``metadata['visibility']`` if it is one of the three
+        allowed strings; otherwise :data:`DEFAULT_VISIBILITY` (a warning is
+        logged for invalid values, matching the parser's existing
+        soft-fail style for malformed metadata).
+      - ``access``: ``metadata['access']`` coerced to ``list[str]`` if it is
+        a list; otherwise ``[]``. Only meaningful when
+        ``visibility == "restricted"`` per ADR-009 §3.4.
+
+    This helper is purely additive — it does not modify ``metadata`` and does
+    not affect :func:`parse_markdown`'s return shape. Slice 3 will consume
+    the result when wiring scope into search.
+    """
+    raw_scope = metadata.get("scope")
+    if isinstance(raw_scope, str) and raw_scope.strip():
+        scope: str | None = raw_scope.strip()
+    else:
+        scope = _default_scope_from_path(file_path) if file_path else None
+
+    raw_vis = metadata.get("visibility", DEFAULT_VISIBILITY)
+    if isinstance(raw_vis, str) and raw_vis in VALID_VISIBILITIES:
+        visibility = raw_vis
+    else:
+        if "visibility" in metadata:
+            logger.warning(
+                "Invalid visibility %r (expected one of %s); falling back to %r",
+                raw_vis,
+                VALID_VISIBILITIES,
+                DEFAULT_VISIBILITY,
+            )
+        visibility = DEFAULT_VISIBILITY
+
+    raw_access = metadata.get("access", [])
+    if isinstance(raw_access, list):
+        access = [str(a) for a in raw_access if a is not None and str(a).strip()]
+    else:
+        access = []
+
+    return {"scope": scope, "visibility": visibility, "access": access}

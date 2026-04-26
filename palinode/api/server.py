@@ -17,7 +17,7 @@ import httpx
 import hashlib
 import subprocess
 import glob
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from contextlib import asynccontextmanager
@@ -325,6 +325,15 @@ class SearchRequest(BaseModel):
     date_before: str | None = None
     context: list[str] | None = None  # Entity refs for ambient context boost
     include_daily: bool | None = False  # Skip daily/ penalty when True (#93)
+    # #141: filter by memory `type` frontmatter (one of PersonMemory, Decision,
+    # ProjectSnapshot, Insight, ResearchRef, ActionItem). Independent of `category`
+    # which filters by directory. Applied as a post-fetch filter; pass multiple
+    # types to OR them.
+    types: list[str] | None = None
+    # #141: relative recency window. If set, derives an effective `date_after`
+    # of `now - since_days` days. Combined with explicit `date_after` by taking
+    # the later (more restrictive) of the two.
+    since_days: int | None = None
 
 class SearchAssociativeRequest(BaseModel):
     query: str
@@ -442,9 +451,43 @@ def read_api(file_path: str, meta: bool = False) -> dict[str, Any]:
         raise _safe_500(e, "File read failed")
 
 
+def _compute_effective_date_after(req: SearchRequest) -> str | None:
+    """Combine explicit date_after with since_days; pick the more restrictive.
+
+    Returns the ISO-8601 string (UTC, "Z" suffix) representing the earliest
+    creation/update time a result is allowed to have. ``since_days`` derives
+    `now - since_days days`. If both are set, takes the later (later → more
+    restrictive). If neither is set, returns None.
+    """
+    derived = None
+    if req.since_days and req.since_days > 0:
+        threshold_dt = _utc_now() - timedelta(days=req.since_days)
+        derived = threshold_dt.isoformat().replace("+00:00", "Z")
+    explicit = req.date_after
+    if derived and explicit:
+        return derived if derived > explicit else explicit
+    return derived or explicit
+
+
+def _filter_types(results: list[dict[str, Any]], types: list[str] | None) -> list[dict[str, Any]]:
+    """Drop results whose frontmatter `type` isn't in the allowed list (#141).
+
+    Empty / None ``types`` is a no-op. Filter is OR-style: a result keeps if its
+    type matches any of the values.
+    """
+    if not types:
+        return results
+    allowed = set(types)
+    return [r for r in results if r.get("metadata", {}).get("type") in allowed]
+
+
 @app.post("/search")
 def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, Any]]:
     """Semantic vector search against cached `.palinode.db` chunks.
+
+    Empty query routes to recency-only mode (#141): returns the most recent
+    chunks ordered by created_at desc, optionally filtered by `types` and
+    `since_days`. Skips embedding entirely.
 
     Returns:
         list[dict[str, Any]]: List payload sequence matching the criteria boundaries.
@@ -454,6 +497,20 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
         if not _check_rate_limit(client_ip, "search", _RATE_LIMIT_SEARCH):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
+        effective_date_after = _compute_effective_date_after(req)
+        limit = req.limit or config.search.default_limit
+
+        # Empty query → recency-only mode. Skip embedding, query chunks
+        # directly ordered by created_at desc, apply types/date_after filter.
+        if not req.query.strip():
+            return store.list_recent(
+                types=req.types,
+                category=req.category,
+                date_after=effective_date_after,
+                date_before=req.date_before,
+                limit=limit,
+            )
+
         # Augment query with project context before embedding
         embed_query = req.query
         if req.context and config.context.enabled and config.context.embed_augment:
@@ -468,15 +525,19 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
 
         use_hybrid = req.hybrid if req.hybrid is not None else config.search.hybrid_enabled
 
+        # Over-fetch when types filter is in play so we still have a chance of
+        # returning `limit` results after the post-fetch type filter (#141).
+        store_limit = limit * 5 if req.types else limit
+
         if use_hybrid:
             results = store.search_hybrid(
                 query_text=req.query,
                 query_embedding=query_emb,
                 category=req.category,
-                top_k=req.limit or config.search.default_limit,
+                top_k=store_limit,
                 threshold=req.threshold or config.search.api_threshold,
                 hybrid_weight=config.search.hybrid_weight,
-                date_after=req.date_after,
+                date_after=effective_date_after,
                 date_before=req.date_before,
                 context_entities=req.context,
                 include_daily=bool(req.include_daily),
@@ -485,14 +546,17 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
             results = store.search(
                 query_embedding=query_emb,
                 category=req.category,
-                top_k=req.limit or config.search.default_limit,
+                top_k=store_limit,
                 threshold=req.threshold or config.search.api_threshold,
-                date_after=req.date_after,
+                date_after=effective_date_after,
                 date_before=req.date_before,
                 context_entities=req.context,
                 include_daily=bool(req.include_daily),
             )
-        return results
+
+        # Apply types filter post-fetch (#141), then trim to caller's limit.
+        results = _filter_types(results, req.types)
+        return results[:limit]
     except Exception as e:
         raise _safe_500(e, "Search failed")
 
@@ -1114,6 +1178,30 @@ class SessionEndRequest(BaseModel):
     blockers: list[str] | None = None
     project: str | None = None
     source: str | None = None
+    # Structured metadata (#145). All optional; existing callers keep working.
+    harness: str | None = None  # e.g. "claude-code", "claude-desktop", "cowork", "openclaw", "cursor", "zed", "vscode", "cli", "api", "hook", "other"
+    cwd: str | None = None  # fully-qualified path the session ran in
+    model: str | None = None  # e.g. "claude-opus-4-7"
+    trigger: str | None = None  # e.g. "manual", "wrap-slash", "ps-slash", "session-end-hook", "clear-fallback-hook", "sigterm", "exit", "other"
+    session_id: str | None = None  # opaque from harness if available
+    duration_seconds: int | None = None
+
+
+def _project_from_cwd(cwd: str | None) -> str | None:
+    """Derive a project slug from a CWD path's basename (#145).
+
+    Mirrors the slug rules used by `palinode init` so the slug a session
+    self-reports matches the slug that scaffolding chose. Returns None if
+    cwd is None / empty / produces an unusable slug.
+    """
+    if not cwd:
+        return None
+    base = os.path.basename(os.path.normpath(cwd))
+    if not base:
+        return None
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "-", base.strip().lower())
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or None
 
 
 @app.post("/session-end")
@@ -1122,6 +1210,9 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
     today = _utc_now().strftime("%Y-%m-%d")
     now_iso = _utc_now().isoformat().replace("+00:00", "Z")
     source = req.source or os.environ.get("PALINODE_SOURCE", "api")
+
+    # Auto-derive project from cwd if caller didn't pass one (#145).
+    project = req.project or _project_from_cwd(req.cwd)
 
     # Build session entry
     parts = [f"## Session End — {now_iso}\n"]
@@ -1138,6 +1229,25 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
             parts.append(f"- {b}")
         parts.append("")
 
+    # Structured metadata footer (#145). Only emit lines that are populated so
+    # the daily note stays uncluttered for callers that don't supply metadata.
+    meta_lines: list[str] = []
+    if req.harness:
+        meta_lines.append(f"**Harness:** {req.harness}")
+    if req.cwd:
+        meta_lines.append(f"**CWD:** {req.cwd}")
+    if req.model:
+        meta_lines.append(f"**Model:** {req.model}")
+    if req.trigger:
+        meta_lines.append(f"**Trigger:** {req.trigger}")
+    if req.session_id:
+        meta_lines.append(f"**Session ID:** {req.session_id}")
+    if req.duration_seconds is not None:
+        meta_lines.append(f"**Duration:** {req.duration_seconds}s")
+    if meta_lines:
+        parts.extend(meta_lines)
+        parts.append("")
+
     session_entry = "\n".join(parts)
 
     # Write to daily notes
@@ -1147,15 +1257,15 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
     with open(daily_path, "a") as f:
         f.write(f"\n{session_entry}\n")
 
-    # Append status to project file if specified
+    # Append status to project file if specified (or auto-derived from cwd).
     status_file = None
-    if req.project:
-        status_path = os.path.join(_memory_base_dir(), "projects", f"{req.project}-status.md")
+    if project:
+        status_path = os.path.join(_memory_base_dir(), "projects", f"{project}-status.md")
         if os.path.exists(status_path):
             one_liner = req.summary.replace("\n", " ").strip()[:200]
             with open(status_path, "a") as f:
                 f.write(f"\n- [{today}] {one_liner}\n")
-            status_file = f"projects/{req.project}-status.md"
+            status_file = f"projects/{project}-status.md"
 
     # Also save as an individual indexed memory file (M0: dual-write).
     # This gives each session-end its own frontmatter, entities, description,
@@ -1163,12 +1273,28 @@ def session_end_api(req: SessionEndRequest) -> dict[str, Any]:
     individual_file = None
     try:
         short_hash = hashlib.sha256(req.summary.encode()).hexdigest()[:8]
+        # Pass structured metadata through to the indexed file's frontmatter so
+        # it's queryable later (#145). Only include fields the caller set.
+        extra_meta: dict[str, Any] = {}
+        if req.harness:
+            extra_meta["harness"] = req.harness
+        if req.cwd:
+            extra_meta["cwd"] = req.cwd
+        if req.model:
+            extra_meta["model"] = req.model
+        if req.trigger:
+            extra_meta["trigger"] = req.trigger
+        if req.session_id:
+            extra_meta["session_id"] = req.session_id
+        if req.duration_seconds is not None:
+            extra_meta["duration_seconds"] = req.duration_seconds
         save_req = SaveRequest(
             content=session_entry,
-            type="ProjectSnapshot" if req.project else "Insight",
-            slug=f"session-end-{today}-{req.project}-{short_hash}" if req.project else f"session-end-{today}-{short_hash}",
-            entities=[f"project/{req.project}"] if req.project else [],
+            type="ProjectSnapshot" if project else "Insight",
+            slug=f"session-end-{today}-{project}-{short_hash}" if project else f"session-end-{today}-{short_hash}",
+            entities=[f"project/{project}"] if project else [],
             source=source,
+            metadata=extra_meta or None,
         )
         save_result = save_api(save_req)
         individual_file = save_result.get("file_path")
@@ -1406,6 +1532,21 @@ def migrate_openclaw_api(req: MigrateOpenClawRequest) -> dict:
     except Exception as exc:
         logger.error(f"OpenClaw migration failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/migrate/mem0")
+def migrate_mem0_api() -> dict[str, str]:
+    """Run the Mem0 backfill pipeline.
+
+    One-time migration: exports from Qdrant, deduplicates, classifies,
+    and generates Palinode markdown files.
+    """
+    from palinode.migration.run_mem0_backfill import main as run_backfill
+    try:
+        run_backfill()
+        return {"status": "success", "message": "Mem0 backfill complete. Review files and reindex."}
+    except Exception as e:
+        raise _safe_500(e, "Backfill failed")
 
 
 def main() -> None:

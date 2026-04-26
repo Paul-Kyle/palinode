@@ -284,6 +284,9 @@ If your IDE only supports stdio and you need remote access, pipe over SSH:
       "args": [
         "-o", "StrictHostKeyChecking=no",
         "-o", "BatchMode=yes",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "TCPKeepAlive=yes",
         "youruser@your-server",
         "PALINODE_DIR=~/.palinode palinode-mcp"
       ]
@@ -293,6 +296,8 @@ If your IDE only supports stdio and you need remote access, pipe over SSH:
 ```
 
 Requires passwordless SSH (`ssh-copy-id youruser@your-server`). HTTP transport is preferred when available.
+
+The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive across NAT/relay idle timeouts (especially common when piping through a VPN like Tailscale). Without them, the MCP connection silently dies after a few minutes of inactivity and you'll see `Connection reset by peer` in the IDE's MCP logs. The keepalives also let SSH detect a dead connection within ~90s after laptop sleep / WiFi change, so the IDE's reconnect logic kicks in faster.
 
 ---
 

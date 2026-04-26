@@ -590,6 +590,87 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     return results
 
+
+def list_recent(
+    types: list[str] | None = None,
+    category: str | None = None,
+    date_after: str | None = None,
+    date_before: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return the most recently created/updated chunks (no semantic ranking).
+
+    Backs the empty-query path on /search (#141). Orders by created_at desc.
+    Push category and type filters into SQL via ``json_extract`` so the
+    "first 100 chunks happen to all be untyped" failure mode doesn't bite
+    us on databases where typed memories are a minority of the corpus.
+
+    Args:
+        types: Filter by frontmatter `type` field (Decision, Insight, etc.).
+            None or empty list = no filter.
+        category: Filter by directory category (people, projects, etc.).
+        date_after/date_before: ISO-8601 inclusive bounds against
+            `metadata.last_updated` (falls back to `chunks.created_at`).
+            Compared as strings — fine for ISO-8601 with consistent zero-padding,
+            including across `T`/space and `Z`/`+00:00` separator variants.
+        limit: Maximum results to return.
+
+    Returns:
+        Result dicts with the same shape as `search()`, except `score` is
+        always 1.0 (no semantic ranking applied) and `raw_score` is unset.
+    """
+    sql = "SELECT * FROM chunks"
+    clauses: list[str] = []
+    params: list[Any] = []
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if types:
+        # SQLite parameter binding doesn't expand IN-lists, so build placeholders
+        # of the right count. json_extract pulls the `type` from the JSON blob.
+        placeholders = ", ".join("?" for _ in types)
+        clauses.append(f"json_extract(metadata, '$.type') IN ({placeholders})")
+        params.extend(types)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    # Over-fetch lightly so the per-row status/date filter has room. The cap
+    # is per-row work, not per-row I/O, so a generous ceiling is cheap.
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(limit * 5, 50))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(sql, tuple(params))
+    rows = cursor.fetchall()
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        if meta.get("status", "active") in config.search.exclude_status:
+            continue
+        if date_after or date_before:
+            updated = meta.get("last_updated", row["created_at"]) or ""
+            if updated:
+                if date_after and updated < date_after:
+                    continue
+                if date_before and updated > date_before:
+                    continue
+        results.append({
+            "file_path": row["file_path"],
+            "section_id": row["section_id"],
+            "content": row["content"],
+            "category": row["category"],
+            "metadata": meta,
+            "content_hash": row["content_hash"] if "content_hash" in row.keys() else None,
+            "score": 1.0,
+        })
+        if len(results) >= limit:
+            break
+
+    db.close()
+    return results
+
+
 def search_hybrid(
     query_text: str,
     query_embedding: list[float],

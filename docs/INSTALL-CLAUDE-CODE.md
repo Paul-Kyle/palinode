@@ -92,6 +92,9 @@ Best if Palinode runs on a homelab server and your IDE only supports stdio MCP (
       "args": [
         "-o", "StrictHostKeyChecking=no",
         "-o", "BatchMode=yes",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "TCPKeepAlive=yes",
         "youruser@your-server",
         "PALINODE_DIR=~/.palinode /path/to/palinode/venv/bin/python -m palinode.mcp"
       ]
@@ -106,6 +109,8 @@ Best if Palinode runs on a homelab server and your IDE only supports stdio MCP (
 - Palinode API + watcher running on the server
 
 > **Note:** The MCP server is a pure HTTP client — it makes requests to `palinode-api` on localhost. No direct database or filesystem access. This means the API server must be running on the remote host.
+
+> **Why the three keepalive options:** the MCP session is a long-lived stdio stream over SSH. NAT and VPN relays (especially Tailscale's DERP) drop idle TCP connections after a few minutes, which would surface as `Connection reset by peer` in the IDE log and a dead MCP server. `ServerAliveInterval=30` + `ServerAliveCountMax=3` makes SSH probe every 30s and disconnect within 90s of a real failure (laptop sleep, WiFi change), letting the IDE reconnect promptly instead of leaving you with a zombie MCP.
 
 ---
 
@@ -371,6 +376,15 @@ Without embeddings, Palinode falls back to BM25 keyword search only.
 **SSH option hangs:**
 - Test SSH manually: `ssh youruser@your-server echo ok`
 - Ensure `BatchMode=yes` and key auth is set up (no password prompts)
+
+**Wondering whether your `/wrap` or hook actually saved the session?**
+
+There are four distinct things that can fail — tool fired, data on disk, retrievable by search, and actually used by a fresh agent. See `docs/VALIDATION-STRATEGY.md` for the four-layer check and the exact commands to run at each layer.
+
+**MCP disconnects after idle / sleep / WiFi change:**
+- Symptom in IDE log: `Connection reset by peer` or `Broken pipe` from the SSH child
+- Cause: SSH idle-killed by NAT/VPN relay (common with Tailscale's DERP), or the network path changed under a sleeping laptop
+- Fix: ensure the three keepalive `-o` flags are in your config (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, `TCPKeepAlive=yes`). With them, SSH detects dead connections within ~90s and the IDE reconnects automatically
 
 **Slow first search:**
 - BGE-M3 is 568MB. Cold start takes 10-30s. Subsequent searches are fast (~100ms).
