@@ -56,6 +56,7 @@ def format_json(results: list[CheckResult]) -> str:
             "passed": r.passed,
             "message": r.message,
             "remediation": r.remediation,
+            "linked_issue": r.linked_issue,
         }
         for r in results
     ]

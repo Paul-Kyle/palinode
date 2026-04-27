@@ -24,6 +24,7 @@ def memory_dir_exists(ctx: DoctorContext) -> CheckResult:
             passed=True,
             message=f"Memory directory exists: {memory_dir}",
             remediation=None,
+            linked_issue="#190",
         )
 
     return CheckResult(
@@ -35,4 +36,5 @@ def memory_dir_exists(ctx: DoctorContext) -> CheckResult:
             f"Create the directory or set PALINODE_DIR to an existing path.\n"
             f"  mkdir -p {memory_dir}"
         ),
+        linked_issue="#190",
     )
