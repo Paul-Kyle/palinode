@@ -1,6 +1,6 @@
 # PARITY.md — Cross-Surface Contract
 
-**Status:** Active (ADR-010 accepted 2026-04-26)
+**Status:** Active
 **Source of truth:** `palinode/core/parity.py` — the registry
 **Forcing function:** `tests/test_surface_parity.py` — CI-blocking
 **Defaults:** `palinode/core/defaults.py` — single-place values for thresholds, cooldowns, source headers
@@ -85,7 +85,7 @@ Stored at `palinode/core/parity.py:MEMORY_TYPES`. The plugin's `palinode_save` s
 compaction, extraction, update, classification, nightly-consolidation
 ```
 
-Stored at `palinode/core/parity.py:PROMPT_TASKS`. ADR-010 #162 fixed the duplicate-`enum` bug at `palinode/mcp.py:624-625`; the canonical list now lives in `parity.py`.
+Stored at `palinode/core/parity.py:PROMPT_TASKS`. The duplicate-`enum` bug at `palinode/mcp.py:624-625` was fixed and the canonical list now lives in `parity.py`.
 
 ## Surface sugar — opt-in convenience, not parity
 
@@ -155,7 +155,6 @@ When an issue closes:
 
 ## See also
 
-- `ADR-010-cross-surface-parity-contract.md` — the decision and rationale.
 - `palinode/core/parity.py` — the registry (source of truth).
 - `palinode/core/defaults.py` — shared defaults.
 - `tests/test_surface_parity.py` — the forcing function.

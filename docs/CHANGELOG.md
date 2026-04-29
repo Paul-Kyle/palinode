@@ -12,7 +12,7 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 - `tests/integration/test_security.py` — Security test suite covering OWASP top-10: path traversal, null bytes, symlink escape, SQL injection, SSRF, CORS enforcement, rate limiting, request size limit, no stack traces, YAML injection, CRLF header injection, and XSS/script injection (#123).
 - `palinode_cluster_neighbors` / `palinode cluster-neighbors` / `POST /cluster-neighbors` — given a memory file path, returns the top-K semantically related files that are NOT already wikilinked to or from it; surfaces implicit relationships for the LLM to propose new cross-links (#235).
 - `palinode_topic_coverage` / `palinode topic-coverage` / `POST /topic-coverage` — given a topic phrase, returns `{covered, best_match, similarity}` indicating whether an existing wiki page already covers the topic; use before ingesting new content to avoid redundancy (#235).
-- Both new tools are exposed across all four ADR-010 surfaces (MCP, REST API, CLI, parity registry) and covered by `tests/test_embedding_tools.py` (#235).
+- Both new tools are exposed across all four surfaces (MCP, REST API, CLI, parity registry) and covered by `tests/test_embedding_tools.py` (#235).
 - IETF KU frontmatter alignment (issue #106): `parse_ku_fields()` in `palinode/core/parser.py` recognizes `ku_version`, `confidence`, and `lifecycle` fields; `config.ku_compat` flag (default `enabled: false`) controls auto-population on save; `confidence` is surfaced as a top-level key in search results when set. See `docs/HOW-MEMORY-WORKS.md` for field semantics.
 - `palinode import --from-vault <path>` — import existing Obsidian vault .md files into the palinode memory store. Infers category from PARA directory structure (Projects→`projects/`, Areas→`decisions/`, Resources→`research/`, Archive→`archive/`), daily-note filename patterns, and frontmatter `type:` field. Rewrites wikilinks to point at new slugged paths; orphaned links are left as-is with a warning. Supports `--apply` (default is dry-run), `--overwrite`, and `--into-category` override. Implemented in `palinode/import_/vault.py` and `palinode/cli/import_vault.py` (#236).
 - `flake.nix`, `nix/services/palinode-service.nix`, `nix/services/mcp-service.nix` — Nix flake and NixOS service modules for palinode API, watcher, and MCP server; community contribution welcome for refinement on real NixOS boxes (#38).
@@ -27,7 +27,7 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`) with unit-tests (Python 3.11/3.12 matrix), integration-tests, and security-scan jobs triggered on every push and PR (#121).
 - GitHub Actions post-merge sweep (`.github/workflows/main-ci.yml`) triggered on push to `main`; auto-opens a GitHub issue on regression (#198).
 - Integration test suite expanded to 24 tests in `tests/integration/test_api_roundtrip.py`, covering git-commit behaviour, CORS origin enforcement, additional path-traversal and null-byte cases, missing-field validation, and an explicit save-index-search-read roundtrip. (issue #120)
-- Retrieval-event instrumentation (#256, ADR-007 prerequisite): every `palinode_search`, `palinode_read`, `palinode_history`, and `palinode_blame` call now appends a structured `RetrievalEvent` to `.audit/retrievals.jsonl`, distinguishing `explicit` (tool-call) from `passive` (auto-inject) modes. No ranker behavior change.
+- Retrieval-event instrumentation (#256): every `palinode_search`, `palinode_read`, `palinode_history`, and `palinode_blame` call now appends a structured `RetrievalEvent` to `.audit/retrievals.jsonl`, distinguishing `explicit` (tool-call) from `passive` (auto-inject) modes. No ranker behavior change.
 - `palinode retrieval-stats` CLI command reads the JSONL log and reports event totals, explicit/passive breakdown, top-20 retrieved files, retrieval-frequency distribution, and mean/median time-since-last-retrieval.
 - `instrumentation.capture_retrievals` config key (default `true`) and `PALINODE_INSTRUMENTATION_DISABLED=1` env var to suppress retrieval logging for privacy.
 
@@ -35,7 +35,7 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 - `PalinodeAPI.__init__` now accepts an optional `client: httpx.Client` argument for test injection (#197).
 - `palinode_history` now accepts `detail="full"` for commit-level diffs (#32); `palinode_timeline` added as a deprecated alias.
-- Plugin TS schemas close ADR-010 plugin drift (#176) — 11 missing params added to `palinode_search` and `palinode_save`; all `known_drift` entries removed.
+- Plugin TS schemas close the remaining plugin parity drift (#176) — 11 missing params added to `palinode_search` and `palinode_save`; all `known_drift` entries removed.
 - `docs/MCP-SETUP.md` — removed prose tool count; the available-tools table is now the source of truth; added `palinode_doctor` and `palinode_doctor_deep` rows (#238).
 - `docs/MCP-SETUP.md`, `docs/MCP-INSTALL-RECIPES.md`, `deploy/systemd/README.md`, `README.md` — clarified that `palinode-mcp-sse` serves streamable-HTTP at `/mcp/` (name is historical); use `"type": "http"` and always include the trailing slash (#258).
 - Nightly consolidation (`nightly.allowed_ops`) now includes `MERGE` (#202). The executor enforces a same-day guard: only facts sharing the same `[YYYY-MM-DD]` date prefix may be merged in a nightly run. Cross-date or undated MERGE proposals are rejected with a log warning and counted as `merge_rejected` in the stats dict.
@@ -129,7 +129,7 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 - File watcher daemon with debounced reindex and fault isolation
 
 **Consolidation and compaction**
-- Deterministic executor applying `KEEP` / `UPDATE` / `MERGE` / `SUPERSEDE` / `ARCHIVE` operations proposed by an LLM (see [ADR-001](../ADR-001-tools-over-pipeline.md))
+- Deterministic executor applying `KEEP` / `UPDATE` / `MERGE` / `SUPERSEDE` / `ARCHIVE` operations proposed by an LLM
 - Weekly full-corpus consolidation with configurable LLM backend
 - Nightly lightweight consolidation pass (`--nightly` flag) bounded to `UPDATE`/`SUPERSEDE` for safer incremental updates
 - Model fallback chains — primary → fallback → fallback on timeout or HTTP error

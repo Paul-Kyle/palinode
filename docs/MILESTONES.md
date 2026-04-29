@@ -67,5 +67,4 @@ M1 (foundation) → M2 (intelligence) → M3 (quality) → M4 (ecosystem) → M5
 ## Related documents
 
 - `docs/CHANGELOG.md` — what shipped when
-- `ADR-001-tools-over-pipeline.md` and other ADRs in repo root — architectural decisions
 - `PROGRAM.md` — behavioral spec for memory extraction and consolidation
