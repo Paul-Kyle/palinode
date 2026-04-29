@@ -161,7 +161,7 @@ class NightlyConfig:
     """Lightweight daily update configurations."""
     enabled: bool = True
     lookback_days: int = 1
-    allowed_ops: list[str] = field(default_factory=lambda: ["UPDATE", "SUPERSEDE"])
+    allowed_ops: list[str] = field(default_factory=lambda: ["UPDATE", "SUPERSEDE", "MERGE"])
 
 @dataclass
 class WriteTimeConfig:
@@ -268,6 +268,15 @@ class AuditConfig:
     log_path: str = ".audit/mcp-calls.jsonl"
 
 @dataclass
+class InstrumentationConfig:
+    """Retrieval-event instrumentation (ADR-007 prerequisite, issue #256).
+
+    capture_retrievals: write one JSONL event per file surfaced by search/read.
+    Set to False (or PALINODE_INSTRUMENTATION_DISABLED=1) to suppress entirely.
+    """
+    capture_retrievals: bool = True
+
+@dataclass
 class LoggingConfig:
     """Log formatting and target directories constraints formats."""
     level: str = "INFO"
@@ -347,6 +356,25 @@ class ScopeConfig:
 
 
 @dataclass
+class KUCompatConfig:
+    """IETF Knowledge Unit (draft-farley-acta-knowledge-units) frontmatter alignment.
+
+    When ``enabled`` is True, every save auto-populates the KU fields
+    ``ku_version``, ``lifecycle``, ``content_hash``, and ``confidence`` (if
+    provided by the caller) in the written frontmatter.
+
+    When ``enabled`` is False (the default), KU fields are only written when
+    the caller explicitly provides them — no auto-population. This preserves
+    backward compatibility for deployments that don't need KU interoperability.
+
+    ``ku_version`` is always ``"1.0"`` (the current draft revision).
+    ``lifecycle`` mirrors ``status`` when present; defaults to ``"active"``.
+    """
+    enabled: bool = False
+    ku_version: str = "1.0"
+
+
+@dataclass
 class CompactionConfig:
     """Operations controls algorithms parameters logic models layouts mapping endpoints."""
     # Which operations are allowed
@@ -373,6 +401,7 @@ class Config:
     search: SearchConfig = field(default_factory=SearchConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    ku_compat: KUCompatConfig = field(default_factory=KUCompatConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     scope: ScopeConfig = field(default_factory=ScopeConfig)
     decay: DecayConfig = field(default_factory=DecayConfig)
@@ -380,6 +409,7 @@ class Config:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     git: GitConfig = field(default_factory=GitConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    instrumentation: InstrumentationConfig = field(default_factory=InstrumentationConfig)
     doctor: DoctorConfig = field(default_factory=DoctorConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     
@@ -498,6 +528,15 @@ def load_config() -> Config:
     #    /tmp/foo/.palinode.db rather than the install-dir default. Fixes #248.
     if cfg.db_path is None:
         cfg.db_path = os.path.join(cfg.memory_dir, ".palinode.db")
+
+    # 6. Resolve audit.log_path: if still at the relative default, anchor it
+    #    under memory_dir so every fresh install gets a consistent absolute
+    #    path. Explicit absolute paths in user config are left untouched.
+    #    Explicit *relative* paths set by the user still warn (the doctor
+    #    check detects relative paths regardless of origin). Fixes #254.
+    _AUDIT_LOG_DEFAULT = ".audit/mcp-calls.jsonl"
+    if cfg.audit.log_path == _AUDIT_LOG_DEFAULT:
+        cfg.audit.log_path = os.path.join(cfg.memory_dir, ".audit", "mcp-calls.jsonl")
     if "OLLAMA_URL" in os.environ:
         cfg.embeddings.primary.url = os.environ["OLLAMA_URL"]
     if "EMBEDDING_MODEL" in os.environ:

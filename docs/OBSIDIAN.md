@@ -200,7 +200,30 @@ In the meantime, the auto-footer is applied lazily on every `palinode_save` to a
 
 ### "I want to import from another vault"
 
-Not supported as a first-class command yet. The cleanest workaround today: copy the markdown files into the appropriate category folders under your Palinode vault, ensure the frontmatter has at least `id`, `category`, `last_updated`, and let the watcher index them. The wiki-drift lint pass will surface anything that needs fixing. A real importer is on the roadmap; no commitment on date.
+Use `palinode import --from-vault`:
+
+```bash
+# Preview what would be imported (dry-run, no writes):
+palinode import --from-vault ~/my-old-vault
+
+# Import for real:
+palinode import --from-vault ~/my-old-vault --apply
+
+# Force everything into one category:
+palinode import --from-vault ~/my-old-vault --into-category archive/ --apply
+
+# Re-run and replace already-imported files:
+palinode import --from-vault ~/my-old-vault --apply --overwrite
+```
+
+The importer:
+
+1. Walks the source vault for `.md` files, skipping `.obsidian/`, `.trash/`, and hidden dirs.
+2. Infers palinode category from PARA directory structure (`Projects/` → `projects/`, `Areas/` → `decisions/`, `Resources/` → `research/`, `Archive/` → `archive/`), daily-note filename patterns (`YYYY-MM-DD.md` → `daily/`), or frontmatter `type:` field. Unmatched files fall back to `archive/`.
+3. Rewrites `[[wikilinks]]` to point at the new slugged destination names for any file included in the import. Links whose targets are not in the import set are left as-is and reported as orphans — run `palinode orphan-repair` after import to fix them.
+4. Adds palinode frontmatter (`id`, `category`, `created_at`, `last_updated`, `source: "vault-import"`) without overwriting existing frontmatter fields.
+
+Default is a **dry-run** — pass `--apply` to write. Re-running without `--overwrite` safely skips already-imported files.
 
 ---
 

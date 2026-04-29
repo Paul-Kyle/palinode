@@ -251,6 +251,88 @@ def parse_markdown(content: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     return metadata, sections
 
 
+# ── IETF KU frontmatter parsing (issue #106) ─────────────────────────────────
+
+# Allowed values for the KU `lifecycle` field (mirrors `status` vocabulary).
+VALID_LIFECYCLES: tuple[str, ...] = ("active", "archived", "deprecated")
+DEFAULT_LIFECYCLE: str = "active"
+
+
+def parse_ku_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Extract IETF Knowledge Unit frontmatter fields from parsed metadata.
+
+    Recognizes three additive fields that align with the
+    ``draft-farley-acta-knowledge-units`` specification:
+
+    ``ku_version``
+        String; expected to be ``"1.0"`` for the current draft.  Returned
+        as-is when present; ``None`` otherwise.
+
+    ``confidence``
+        Float in 0.0–1.0.  Invalid values (outside range or wrong type) are
+        coerced to ``None`` and a warning is logged — soft-fail, consistent
+        with the rest of the parser.
+
+    ``lifecycle``
+        One of ``"active"``, ``"archived"``, ``"deprecated"``.  When absent,
+        falls back to ``status`` if that field is one of the valid values;
+        otherwise defaults to ``"active"``.  Invalid values log a warning.
+
+    All three fields are purely additive — missing fields return ``None`` /
+    the default rather than raising.  Existing files that lack these fields
+    parse without issue (backward compat).
+
+    Args:
+        metadata: Parsed frontmatter dict (as returned by ``parse_markdown``).
+
+    Returns:
+        Dict with keys ``ku_version`` (str | None), ``confidence``
+        (float | None), ``lifecycle`` (str).
+    """
+    # ku_version — accept any string
+    raw_version = metadata.get("ku_version")
+    ku_version: str | None = str(raw_version).strip() if raw_version is not None else None
+
+    # confidence — float in [0.0, 1.0]
+    raw_conf = metadata.get("confidence")
+    confidence: float | None = None
+    if raw_conf is not None:
+        try:
+            conf_val = float(raw_conf)
+            if 0.0 <= conf_val <= 1.0:
+                confidence = conf_val
+            else:
+                logger.warning(
+                    "Invalid confidence %r (must be 0.0–1.0); ignoring.", raw_conf
+                )
+        except (TypeError, ValueError):
+            logger.warning("Invalid confidence %r (not a number); ignoring.", raw_conf)
+
+    # lifecycle — with fallback to `status`
+    raw_lc = metadata.get("lifecycle")
+    if isinstance(raw_lc, str) and raw_lc in VALID_LIFECYCLES:
+        lifecycle = raw_lc
+    else:
+        if raw_lc is not None:
+            logger.warning(
+                "Invalid lifecycle %r (expected one of %s); falling back.",
+                raw_lc,
+                VALID_LIFECYCLES,
+            )
+        # Fall back to `status` field if it maps to a KU lifecycle value
+        raw_status = metadata.get("status", "active")
+        if isinstance(raw_status, str) and raw_status in VALID_LIFECYCLES:
+            lifecycle = raw_status
+        else:
+            lifecycle = DEFAULT_LIFECYCLE
+
+    return {
+        "ku_version": ku_version,
+        "confidence": confidence,
+        "lifecycle": lifecycle,
+    }
+
+
 # ── ADR-009 §3.3: scope frontmatter parsing ───────────────────────────────
 
 
@@ -270,6 +352,48 @@ def _default_scope_from_path(file_path: str) -> str | None:
     if not parent:
         return None
     return f"project/{parent}"
+
+
+def parse_external_refs(metadata: dict[str, Any]) -> dict[str, str] | None:
+    """Extract and validate ``external_refs`` from frontmatter.
+
+    The field is expected to be a flat ``dict[str, str]``.  Values that are
+    not already strings are coerced with ``str()`` (e.g. ints). Nested
+    dicts/lists trigger a soft warning and are dropped from the result so
+    they don't corrupt downstream consumers.
+
+    Returns the validated dict, or ``None`` when the field is absent.
+
+    Args:
+        metadata: Parsed frontmatter dict (as returned by ``parse_markdown``).
+
+    Returns:
+        ``dict[str, str]`` of external references, or ``None`` when the field
+        is not present in the frontmatter.
+    """
+    raw = metadata.get("external_refs")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        logger.warning(
+            "external_refs must be a dict, got %s — field ignored",
+            type(raw).__name__,
+        )
+        return None
+
+    result: dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(value, (dict, list)):
+            logger.warning(
+                "external_refs[%r] has nested value (type %s); "
+                "nested values are not supported — entry dropped",
+                key,
+                type(value).__name__,
+            )
+        else:
+            result[str(key)] = str(value)
+
+    return result if result else None
 
 
 def parse_scope(

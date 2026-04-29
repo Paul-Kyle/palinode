@@ -38,6 +38,8 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 
 # Built-in plausible roots.  Paths that do not exist on the current system
 # are silently skipped during the walk.
+# Entries like "/home/example-user/..." are intentional historical roots kept
+# for installs that used these paths; they are harmless on systems that don't have them.
 _BUILTIN_ROOTS: list[str] = [
     "{memory_dir}",
     "{home}",

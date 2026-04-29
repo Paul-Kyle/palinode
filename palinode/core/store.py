@@ -20,6 +20,7 @@ import hashlib
 from typing import Any, Sequence
 from datetime import UTC, datetime, timedelta
 from palinode.core.config import config
+from palinode.core import parser as _parser
 
 _store_logger = __import__('logging').getLogger("palinode.store")
 
@@ -486,7 +487,7 @@ def search(query_embedding: list[float], category: str | None = None,
         if score < threshold:
             continue
 
-        results.append({
+        result_entry: dict[str, Any] = {
             "file_path": row["file_path"],
             "section_id": row["section_id"],
             "content": row["content"],
@@ -495,7 +496,11 @@ def search(query_embedding: list[float], category: str | None = None,
             "content_hash": row["content_hash"] if "content_hash" in row.keys() else None,
             "score": score,
             "raw_score": score,
-        })
+        }
+        # #106: surface confidence as top-level key when present in frontmatter.
+        if "confidence" in meta:
+            result_entry["confidence"] = meta["confidence"]
+        results.append(result_entry)
         if len(results) >= top_k:
             break
 
@@ -630,11 +635,22 @@ def search_fts(query: str, category: str | None = None, top_k: int = 10) -> list
 def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Annotate search results with freshness status.
 
-    Reads the source file for each result, computes current hash,
-    compares against stored content_hash in chunk metadata.
+    Reads the source file for each result, parses it into sections (matching
+    the indexer's per-section hashing), and compares the section's current hash
+    to the stored content_hash for that chunk.
+
+    The stored content_hash is computed over a single section's content (see
+    ``palinode/indexer/index_file.py``), so comparing a whole-file body hash
+    against it always mismatched for multi-section files (#203).  The fix is to
+    locate the matching section by section_id, hash only that section, and
+    compare.
 
     Returns results with added 'freshness' key: 'valid' | 'stale' | 'unknown'
     """
+    # Cache parsed sections per file path to avoid re-reading the same file
+    # once per result when multiple chunks come from the same file.
+    _sections_cache: dict[str, list[dict[str, str]]] = {}
+
     for result in results:
         file_path = result.get("file_path", "")
         stored_hash = result.get("content_hash") or result.get("metadata", {}).get("content_hash")
@@ -649,17 +665,25 @@ def check_freshness(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         try:
-            with open(full_path, "r") as f:
-                raw = f.read()
-            # Hash body only (below frontmatter) to match what the indexer hashes.
-            # Frontmatter changes (metadata edits) don't make content "stale".
-            if raw.startswith("---"):
-                end = raw.find("---", 3)
-                body = raw[end + 3:].strip() if end != -1 else raw
-            else:
-                body = raw
-            full_hash = hashlib.sha256(body.encode()).hexdigest()
-            # Compare against both full (64-char) and truncated (16-char) hashes
+            if full_path not in _sections_cache:
+                with open(full_path, "r") as f:
+                    raw = f.read()
+                _, sections = _parser.parse_markdown(raw)
+                _sections_cache[full_path] = sections
+
+            sections = _sections_cache[full_path]
+            section_id = result.get("section_id", "root")
+
+            # Find the section whose section_id matches this chunk.
+            matching = next((s for s in sections if s["section_id"] == section_id), None)
+            if matching is None:
+                # Section no longer exists in the file — content was removed.
+                result["freshness"] = "stale"
+                continue
+
+            # Hash the section content exactly as the indexer does (#203 fix).
+            full_hash = hashlib.sha256(matching["content"].encode()).hexdigest()
+            # Support both full (64-char) and legacy truncated (16-char) hashes.
             current_hash = full_hash if len(stored_hash) > 16 else full_hash[:16]
             result["freshness"] = "valid" if current_hash == stored_hash else "stale"
         except Exception:
@@ -732,7 +756,7 @@ def list_recent(
                     continue
                 if date_before and updated > date_before:
                     continue
-        results.append({
+        list_entry: dict[str, Any] = {
             "file_path": row["file_path"],
             "section_id": row["section_id"],
             "content": row["content"],
@@ -740,7 +764,11 @@ def list_recent(
             "metadata": meta,
             "content_hash": row["content_hash"] if "content_hash" in row.keys() else None,
             "score": 1.0,
-        })
+        }
+        # #106: surface confidence as top-level key when present in frontmatter.
+        if "confidence" in meta:
+            list_entry["confidence"] = meta["confidence"]
+        results.append(list_entry)
         if len(results) >= limit:
             break
 

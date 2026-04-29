@@ -518,3 +518,213 @@ def test_orphan_repair_min_similarity_kwarg_is_honored(client, tmp_path):
     ).json()
     for r in strict:
         assert r["similarity"] >= 0.95
+
+
+# ---------------------------------------------------------------------------
+# API tests — cluster_neighbors (#235)
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_neighbors_preprocessing_no_false_positive(client, tmp_path):
+    """Two notes that share the same project entity but have completely
+    different topics MUST NOT cluster together.
+
+    The ``cluster_neighbors`` preprocessing pipeline strips shared wikilink
+    syntax (``[[alice]]``) and the auto-generated ``## See also`` footer so
+    that "linked to the same entity" is not confused with "semantically
+    similar content".  This mirrors the P1-correctness test for
+    ``dedup_suggest``.
+    """
+    from palinode.core.embedding_preprocess import AUTO_FOOTER_MARKER
+
+    note_a = (
+        "---\n"
+        "entities: [project/palinode]\n"
+        "---\n"
+        "Database migration strategy: partition schemes and sharding tradeoffs "
+        "for the analytics warehouse.\n"
+        "\n"
+        "## See also\n"
+        f"{AUTO_FOOTER_MARKER}\n"
+        "- [[palinode]]\n"
+    )
+    note_b = (
+        "---\n"
+        "entities: [project/palinode]\n"
+        "---\n"
+        "Weekend cabin trip: sourdough recipes, hiking trails, and firewood "
+        "storage for the off-grid retreat.\n"
+        "\n"
+        "## See also\n"
+        f"{AUTO_FOOTER_MARKER}\n"
+        "- [[palinode]]\n"
+    )
+    _ingest(tmp_path, "decisions/database-migration.md", note_a)
+    _ingest(tmp_path, "daily/cabin-trip.md", note_b)
+
+    # Ask for cluster neighbours of the database note — cabin trip MUST NOT
+    # appear with a high similarity just because both link [[palinode]].
+    resp = client.post(
+        "/cluster-neighbors",
+        json={
+            "file_path": "decisions/database-migration.md",
+            "min_similarity": 0.0,  # see everything
+            "top_k": 10,
+        },
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    by_path = {r["file_path"]: r for r in results}
+
+    # The database-migration note itself must never appear in its own results.
+    assert "decisions/database-migration.md" not in by_path, (
+        "cluster_neighbors must not return the source file itself."
+    )
+
+    # The cabin-trip note must NOT cluster with the database note after
+    # preprocessing strips the shared [[palinode]] footer tokens.
+    cabin = by_path.get("daily/cabin-trip.md")
+    if cabin is not None:
+        assert cabin["similarity"] < 0.80, (
+            "PREPROCESSING REGRESSION: two notes with disjoint content but the "
+            "same [[palinode]] wikilink are clustering together with similarity "
+            f"{cabin['similarity']:.3f}. Preprocessing is not running correctly."
+        )
+
+
+def test_cluster_neighbors_similar_notes_cluster(client, tmp_path):
+    """Two notes with substantially overlapping semantic content SHOULD cluster
+    together when neither is wikilinked to the other.
+    """
+    _ingest(
+        tmp_path,
+        "decisions/deployment-strategy.md",
+        "Deployment strategy for palinode: rolling updates, staging validation, "
+        "canary releases, and rollback procedures for the production environment.",
+    )
+    _ingest(
+        tmp_path,
+        "decisions/rollout-plan.md",
+        "Production rollout plan: staging validation, canary release schedule, "
+        "deployment steps, and rollback criteria for the environment.",
+    )
+    # A third, unrelated note
+    _ingest(
+        tmp_path,
+        "people/weekend-notes.md",
+        "Weekend coffee shop visit: cappuccino art and baking classes.",
+    )
+
+    resp = client.post(
+        "/cluster-neighbors",
+        json={
+            "file_path": "decisions/deployment-strategy.md",
+            "min_similarity": 0.1,
+            "top_k": 10,
+        },
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    file_paths = [r["file_path"] for r in results]
+
+    # The semantically similar rollout-plan should appear.
+    assert "decisions/rollout-plan.md" in file_paths, (
+        "Semantically similar note 'rollout-plan.md' should cluster with "
+        "'deployment-strategy.md' when no wikilink exists between them."
+    )
+
+
+def test_cluster_neighbors_respects_top_k(client, tmp_path):
+    """cluster_neighbors must not return more than top_k results."""
+    for i in range(8):
+        _ingest(
+            tmp_path,
+            f"projects/project-{i}.md",
+            f"Project plan {i}: architecture review rollout deployment staging checklist.",
+        )
+
+    resp = client.post(
+        "/cluster-neighbors",
+        json={
+            "file_path": "projects/project-0.md",
+            "min_similarity": 0.0,
+            "top_k": 3,
+        },
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) <= 3
+
+
+def test_cluster_neighbors_respects_min_similarity(client, tmp_path):
+    """cluster_neighbors must filter out candidates below min_similarity."""
+    _ingest(
+        tmp_path,
+        "decisions/alpha.md",
+        "deployment rollout staging procedures alpha beta gamma delta",
+    )
+    _ingest(
+        tmp_path,
+        "projects/omega.md",
+        "completely unrelated gardening rainfall irrigation botany seeds",
+    )
+
+    strict = client.post(
+        "/cluster-neighbors",
+        json={
+            "file_path": "decisions/alpha.md",
+            "min_similarity": 0.95,
+            "top_k": 10,
+        },
+    ).json()
+    for r in strict:
+        assert r["similarity"] >= 0.95
+
+
+# ---------------------------------------------------------------------------
+# API tests — topic_coverage (#235)
+# ---------------------------------------------------------------------------
+
+
+def test_topic_coverage_returns_covered_when_match_exists(client, tmp_path):
+    """A query matching an indexed file → covered=True, best_match set."""
+    _ingest(
+        tmp_path,
+        "decisions/machine-learning-deployment.md",
+        "Machine learning model deployment: container orchestration, GPU scheduling, "
+        "model versioning, and inference latency targets.",
+    )
+
+    resp = client.post(
+        "/topic-coverage",
+        json={
+            "query": "machine learning deployment GPU orchestration",
+            "min_similarity": 0.1,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["covered"] is True
+    assert data["best_match"] is not None
+    assert "machine-learning-deployment" in data["best_match"]
+    assert data["similarity"] > 0.0
+
+
+def test_topic_coverage_returns_not_covered_for_novel_topic(client, tmp_path):
+    """A query with no semantic match → covered=False, best_match=None."""
+    _ingest(
+        tmp_path,
+        "decisions/database-schema.md",
+        "Database schema evolution: foreign keys, index strategies, migration scripts.",
+    )
+
+    resp = client.post(
+        "/topic-coverage",
+        json={
+            "query": "Renaissance painting techniques chiaroscuro oil fresco",
+            "min_similarity": 0.70,  # well above expected similarity to database schema
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["covered"] is False
+    assert data["best_match"] is None

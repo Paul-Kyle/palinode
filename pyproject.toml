@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "palinode"
-version = "0.8.1"
+version = "0.8.5"
 description = "The memory substrate for AI agents and developer tools. Git-versioned, file-native, MCP-first."
 authors = [
   {name = "Paul Kyle", email = "paul@phasespace.co"}
@@ -72,15 +72,4 @@ markers = [
 asyncio_mode = "strict"
 
 [tool.setuptools]
-packages = [
-    "palinode",
-    "palinode.api",
-    "palinode.cli",
-    "palinode.consolidation",
-    "palinode.core",
-    "palinode.diagnostics",
-    "palinode.diagnostics.checks",
-    "palinode.indexer",
-    "palinode.ingest",
-    "palinode.migration",
-]
+packages = ["palinode", "palinode.core", "palinode.indexer", "palinode.api", "palinode.ingest", "palinode.consolidation", "palinode.migration", "palinode.cli"]

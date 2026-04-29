@@ -83,6 +83,10 @@ def _cli_param_names(cmd: click.Command) -> set[str]:
         names.add("type")
     # Click uses `entities` (multiple=True) for `--entity` repeated.  Same
     # canonical name; nothing to do.
+    # Click uses `external_ref_pairs` as dest for `--external-ref` (multiple);
+    # expose under the canonical "external_refs" name too (#115).
+    if "external_ref_pairs" in names:
+        names.add("external_refs")
     return names
 
 

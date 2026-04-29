@@ -1,6 +1,6 @@
 # Palinode MCP Setup
 
-Connect Palinode's 17 MCP tools to your AI coding assistant. Two transport options:
+Connect Palinode's MCP tools to your AI coding assistant. Two transport options:
 
 | Transport | When to use | Key field |
 |-----------|-------------|-----------|
@@ -18,7 +18,7 @@ snippet, restart sequence, verification step, and troubleshooting table for that
 ## Prerequisites
 
 - Palinode API running (`palinode-api` on port 6340)
-- For HTTP transport: `palinode-mcp-sse` running on port 6341
+- For HTTP transport: `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/` — name is historical)* running on port 6341
 - For stdio transport: `pip install -e .` so `palinode-mcp` is on PATH
 
 ---
@@ -41,11 +41,14 @@ claude mcp add palinode -- palinode-mcp
 {
   "mcpServers": {
     "palinode": {
+      "type": "http",
       "url": "http://your-server:6341/mcp/"
     }
   }
 }
 ```
+
+> **URL note:** Always use the trailing slash (`/mcp/` not `/mcp`). Without it, the server issues a 307 redirect that strict MCP clients may reject.
 
 ### Option 3: Global config (`~/.claude/settings.json`)
 
@@ -73,16 +76,19 @@ Edit `claude_desktop_config.json`:
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-**HTTP (remote):**
+**HTTP (remote, streamable-HTTP transport):**
 ```json
 {
   "mcpServers": {
     "palinode": {
+      "type": "http",
       "url": "http://your-server:6341/mcp/"
     }
   }
 }
 ```
+
+> `palinode-mcp-sse` serves **streamable-HTTP** at `/mcp/` — the binary name is historical. Configure clients with `"type": "http"` (not `"type": "sse"`). Always include the trailing slash in the URL.
 
 **stdio (local):**
 ```json
@@ -106,6 +112,19 @@ Restart Claude Desktop after saving.
 
 See **[MCP-INSTALL-RECIPES.md](MCP-INSTALL-RECIPES.md)** for complete per-client workflows
 including exact config snippets, restart sequences, and troubleshooting blocks.
+
+---
+
+## Codex CLI
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.palinode]
+url = "http://your-server:6341/mcp/"
+```
+
+Codex CLI has no skills system. The full palinode MCP tool set is available in conversations once the server is reachable.
 
 ---
 
@@ -148,6 +167,7 @@ The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive acr
 | `PALINODE_MCP_SSE_HOST` | `0.0.0.0` | Bind address for HTTP MCP server |
 | `PALINODE_MCP_SSE_PORT` | `6341` | Port for HTTP MCP server |
 | `PALINODE_PROJECT` | _(auto-detect from CWD)_ | Project context for ambient search |
+| `PALINODE_API_BIND_INTENT` | _(unset)_ | Set to `public` to suppress the 0.0.0.0 binding warning for intentional network-exposed deployments (e.g., Tailscale). The warning still fires when this is unset and the API binds to `0.0.0.0`. |
 
 ---
 
@@ -162,7 +182,8 @@ The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive acr
 | `palinode_list` | List memory files by category |
 | `palinode_read` | Read a specific memory file |
 | `palinode_entities` | Entity graph traversal |
-| `palinode_history` | Git history of a memory file |
+| `palinode_history` | Git history of a memory file; `detail="full"` adds per-commit diffs |
+| `palinode_timeline` | **Deprecated** — alias for `palinode_history` with `detail="full"`; will be removed in v0.9 |
 | `palinode_blame` | Per-line provenance for a memory file |
 | `palinode_diff` | What changed across memory in the last N days |
 | `palinode_rollback` | Revert a memory file to a previous version |
@@ -174,10 +195,15 @@ The three `ServerAlive*` / `TCPKeepAlive` options keep the SSH session alive acr
 | `palinode_session_end` | Capture session outcomes to daily notes |
 | `palinode_dedup_suggest` | Pre-write check: existing files semantically near a draft (Obsidian wiki contract) |
 | `palinode_orphan_repair` | Given a broken `[[wikilink]]`, return semantically near candidate targets |
+| `palinode_cluster_neighbors` | Given a file path, return semantically related files NOT already wikilinked to or from it |
+| `palinode_topic_coverage` | Given a topic phrase, check whether any wiki page already covers it |
+| `palinode_doctor` | Fast diagnostic pass — checks paths, services, config, and index health |
+| `palinode_doctor_deep` | Full diagnostic with canary write test (~10–15s) |
+| `palinode_depends` | Dependency tree for a milestone/task slug; `unblocked=true` lists ready-to-start items |
 
 ### Obsidian wiki-maintenance tools
 
-The last two tools (`palinode_dedup_suggest`, `palinode_orphan_repair`) are part of the Obsidian integration's wiki-maintenance contract. They give the LLM cheap pre-write checks: "does a near-duplicate already exist?" and "this `[[wikilink]]` has no target — what's the right file to point at?" Both are MCP-callable from any compatible client and are documented in detail in [OBSIDIAN.md](OBSIDIAN.md#the-embedding-tools), including default similarity thresholds and the embedding-text preprocessing that runs before comparison.
+The four tools `palinode_dedup_suggest`, `palinode_orphan_repair`, `palinode_cluster_neighbors`, and `palinode_topic_coverage` are part of the Obsidian integration's wiki-maintenance contract. They give the LLM cheap embedding-based checks: "does a near-duplicate already exist?", "this `[[wikilink]]` has no target — what's the right file to point at?", "what related pages have no wikilink yet?", and "is this topic already covered?". All four are MCP-callable from any compatible client and are documented in detail in [OBSIDIAN.md](OBSIDIAN.md#the-embedding-tools), including default similarity thresholds and the embedding-text preprocessing that runs before comparison.
 
 ---
 
@@ -197,7 +223,7 @@ Search palinode for "recent project decisions"
 
 If the status check fails, verify:
 1. `palinode-api` is running and reachable (`curl http://your-server:6340/status`)
-2. For HTTP transport: `palinode-mcp-sse` is running (`curl http://your-server:6341/mcp/`)
+2. For HTTP transport: `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/`)* is running (`curl http://your-server:6341/mcp/`)
 3. For stdio: `palinode-mcp` is on PATH (`which palinode-mcp`)
 4. `PALINODE_DIR` exists and contains at least one `.md` file
 

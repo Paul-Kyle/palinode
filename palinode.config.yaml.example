@@ -239,8 +239,11 @@ consolidation:
     enabled: true
     # How many days to look back (1 = today only)
     lookback_days: 1
-    # Restrict to safe, additive operations — no restructuring
-    allowed_ops: ["UPDATE", "SUPERSEDE"]
+    # Restrict to safe, additive operations — no cross-date restructuring.
+    # MERGE is allowed but the executor enforces a same-day guard: only facts
+    # sharing the same [YYYY-MM-DD] date prefix may be merged in a nightly run.
+    # Cross-date or undated MERGE proposals are rejected with a log warning.
+    allowed_ops: ["UPDATE", "SUPERSEDE", "MERGE"]
 
   # Write-time contradiction check (Tier 2a — ADR-004)
   # When enabled, every palinode_save schedules a background LLM check against

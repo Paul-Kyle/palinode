@@ -1,14 +1,18 @@
-"""CLI commands for the Obsidian embedding-tool MVP (#210).
+"""CLI commands for the Obsidian embedding-tool MVP (#210, #235).
 
-Two commands, mirroring the MCP / API surface:
+Four commands, mirroring the MCP / API surface:
 
 * ``palinode dedup-suggest`` — given draft content, list semantically near
   existing files; flags strong duplicates at ≥0.90 similarity.
 * ``palinode orphan-repair`` — given a broken ``[[wikilink]]``, list files
   semantically near the link target.
+* ``palinode cluster-neighbors`` — given a file path, list semantically
+  related files NOT already wikilinked to or from it (#235).
+* ``palinode topic-coverage`` — given a topic phrase, check whether any wiki
+  page already covers it (#235).
 
-Both honor TTY-aware output (text for humans, JSON when piped) per the project
-CLI convention.
+All commands honor TTY-aware output (text for humans, JSON when piped) per the
+project CLI convention.
 """
 from __future__ import annotations
 
@@ -177,3 +181,118 @@ def orphan_repair(broken_link, min_similarity, top_k, fmt):
         console.print(f"[bold blue]{fp}[/bold blue] ({pct}% similar)")
         console.print(f"  {snippet}")
         console.print()
+
+
+@click.command("cluster-neighbors")
+@click.option(
+    "--file",
+    "file_path",
+    required=True,
+    help="Memory file path (relative to memory_dir) to find unlinked neighbours for.",
+)
+@click.option(
+    "--min-similarity",
+    type=float,
+    default=None,
+    help="Minimum cosine similarity to surface (0.0–1.0). Default 0.70.",
+)
+@click.option(
+    "--top-k",
+    type=int,
+    default=None,
+    help="Maximum candidates to return. Default 10.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "text"]),
+    help="Output format (default: text on TTY, json when piped).",
+)
+def cluster_neighbors(file_path, min_similarity, top_k, fmt):
+    """Find semantically related files NOT already linked to/from FILE.
+
+    Use during wiki-maintenance passes to surface implicit relationships that
+    no ``[[wikilink]]`` yet captures.  Results are sorted by similarity
+    descending; the LLM can propose new cross-links for the top results.
+    """
+    try:
+        results = api_client.cluster_neighbors(
+            file_path=file_path,
+            min_similarity=min_similarity,
+            top_k=top_k,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    output_fmt = OutputFormat(fmt) if fmt else get_default_format()
+    if output_fmt == OutputFormat.JSON:
+        print_result(results, fmt=output_fmt)
+        return
+
+    if not results:
+        console.print(
+            "[green]No unlinked semantic neighbours found above threshold.[/green]"
+        )
+        return
+
+    for r in results:
+        fp = r.get("file_path", "")
+        pct = int(r.get("similarity", 0) * 100)
+        snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:200]
+        console.print(f"[bold blue]{fp}[/bold blue] ({pct}% similar)")
+        console.print(f"  {snippet}")
+        console.print()
+
+
+@click.command("topic-coverage")
+@click.option(
+    "--query",
+    required=True,
+    help="Topic phrase to check (e.g. 'machine learning deployment').",
+)
+@click.option(
+    "--min-similarity",
+    type=float,
+    default=None,
+    help="Minimum cosine similarity to count as 'covered' (0.0–1.0). Default 0.78.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "text"]),
+    help="Output format (default: text on TTY, json when piped).",
+)
+def topic_coverage(query, min_similarity, fmt):
+    """Check whether any wiki page already covers a TOPIC phrase.
+
+    Use BEFORE ingesting new content to ask "is this already covered?".
+    Returns ``covered=True`` with the best-matching file path when the topic
+    is already well-represented, or ``covered=False`` when it is novel.
+    """
+    try:
+        result = api_client.topic_coverage(
+            query=query,
+            min_similarity=min_similarity,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    output_fmt = OutputFormat(fmt) if fmt else get_default_format()
+    if output_fmt == OutputFormat.JSON:
+        print_result(result, fmt=output_fmt)
+        return
+
+    if result.get("covered"):
+        best = result.get("best_match", "")
+        pct = int(result.get("similarity", 0) * 100)
+        console.print(
+            f"[yellow]COVERED[/yellow] — {best} ({pct}% similar). "
+            "Consider updating the existing page rather than creating a new one."
+        )
+    else:
+        console.print(
+            "[green]NOT COVERED[/green] — no existing page matches this topic above "
+            f"threshold (best: {result.get('similarity', 0.0):.2f}). Safe to create new."
+        )

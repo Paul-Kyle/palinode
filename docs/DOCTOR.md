@@ -485,3 +485,46 @@ palinode doctor --json | jq -e '.[] | select(.passed == false)' >/dev/null && ec
 - `docs/DEPLOYMENT-GUIDE.md` — when to run doctor in the deploy lifecycle.
 - `docs/QUICKSTART.md` — first-install verification with `palinode doctor`.
 - `palinode doctor` is intended to be the operator-facing surface; this guide stays focused on behavior rather than internal implementation history.
+
+---
+
+## `palinode lint` — memory health linter
+
+`palinode lint` is a companion to `doctor` focused on *memory content* rather than infrastructure. It scans `PALINODE_DIR` for structural problems:
+
+- Missing frontmatter fields (`id`, `type`, `category`)
+- Orphaned files (no entity refs and not referenced by others)
+- Stale active files (not updated in 90+ days)
+- Potential heuristic contradictions (multiple active files for the same entity slug)
+- Missing `entities:` lists and `description:` fields
+- Core file count (warn if > 10)
+- Wiki drift (frontmatter entities vs body `[[wikilinks]]`)
+
+```bash
+palinode lint               # text report (default)
+palinode lint --format json # machine-parseable
+```
+
+### Deep contradiction check (`--deep-contradictions`)
+
+The default lint contradiction check is heuristic (same-slug active files). For semantic contradiction detection — an old Decision says X but a new one says NOT X — use the opt-in flag:
+
+```bash
+palinode lint --deep-contradictions
+```
+
+This flag:
+
+1. Collects all `type: Decision` memories.
+2. Embeds each body via the configured embedding backend.
+3. For pairs that share at least one `entities:` entry and have cosine similarity above the threshold (default 0.75), sends both bodies to the configured LLM endpoint.
+4. The LLM classifies each pair as `CONTRADICTION`, `AGREEMENT`, or `UNRELATED`; only contradictions are surfaced as findings.
+
+Tuning flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--similarity-threshold` | `0.75` | Cosine similarity floor for candidate pairs (0–1). Lower = more candidates. |
+| `--max-llm-calls` | `50` | Hard cap on LLM calls per run. Top pairs by similarity are evaluated first. |
+
+The default `palinode lint` (no flag) makes **no LLM calls**. The LLM endpoint used is `consolidation.llm_url` / `consolidation.llm_model` from `palinode.config.yaml`.

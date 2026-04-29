@@ -174,19 +174,44 @@ const palinodePlugin = {
           limit: Type.Optional(
             Type.Number({ description: "Max results (default 5)" }),
           ),
+          threshold: Type.Optional(
+            Type.Number({ description: "Similarity threshold (0.0–1.0). Higher = stricter." }),
+          ),
+          since_days: Type.Optional(
+            Type.Number({ description: "Only return memories from the last N days." }),
+          ),
+          types: Type.Optional(
+            Type.Array(Type.String(), { description: "Filter by memory type (e.g. Decision, Insight)." }),
+          ),
+          date_after: Type.Optional(
+            Type.String({ description: "Filter results after an ISO date (e.g. 2024-01-01)." }),
+          ),
+          date_before: Type.Optional(
+            Type.String({ description: "Filter results before an ISO date." }),
+          ),
+          include_daily: Type.Optional(
+            Type.Boolean({ description: "Include daily session notes in results (default false)." }),
+          ),
         }),
         async execute(_toolCallId: string, params: any) {
           try {
+            const body: Record<string, any> = {
+              query: params.query,
+              limit: params.limit || 5,
+            };
+            if (params.category !== undefined) body.category = params.category;
+            if (params.threshold !== undefined) body.threshold = params.threshold;
+            if (params.since_days !== undefined) body.since_days = params.since_days;
+            if (params.types !== undefined) body.types = params.types;
+            if (params.date_after !== undefined) body.date_after = params.date_after;
+            if (params.date_before !== undefined) body.date_before = params.date_before;
+            if (params.include_daily !== undefined) body.include_daily = params.include_daily;
             const results = await palinodeFetch(
               cfg.palinodeApiUrl,
               "/search",
               {
                 method: "POST",
-                body: JSON.stringify({
-                  query: params.query,
-                  category: params.category,
-                  limit: params.limit || 5,
-                }),
+                body: JSON.stringify(body),
               },
             );
 
@@ -255,6 +280,27 @@ const palinodePlugin = {
             Type.Boolean({
               description: "If true, this memory is always injected at session start (core memory)",
             }),
+          ),
+          project: Type.Optional(
+            Type.String({ description: "Project slug shorthand, e.g. 'palinode' becomes 'project/palinode'." }),
+          ),
+          metadata: Type.Optional(
+            Type.Record(Type.String(), Type.Unknown(), { description: "Arbitrary additional frontmatter fields." }),
+          ),
+          confidence: Type.Optional(
+            Type.Number({ description: "Confidence in this memory's accuracy (0.0–1.0)." }),
+          ),
+          external_refs: Type.Optional(
+            Type.Record(Type.String(), Type.String(), {
+              description:
+                "SDLC object references. Recognised keys: gitlab_mr, gitlab_issue, gitlab_pipeline, github_pr, linear_issue, jira_issue. Free-form keys also accepted.",
+            }),
+          ),
+          title: Type.Optional(
+            Type.String({ description: "Optional human-readable title stored in frontmatter." }),
+          ),
+          source: Type.Optional(
+            Type.String({ description: "Source surface that created this memory (e.g. 'claude-code'). Auto-detected if omitted." }),
           ),
         }),
         async execute(_toolCallId: string, params: any) {
@@ -386,6 +432,35 @@ const palinodePlugin = {
             return { content: [{ type: "text", text: res.blame }] };
         },
     }, { name: "palinode_blame" });
+
+    api.registerTool({
+        name: "palinode_depends",
+        label: "Palinode Depends",
+        description: "Return the dependency tree for a milestone or task slug, or list all unblocked (ready-to-start) items.",
+        parameters: Type.Object({
+            slug: Type.Optional(Type.String({ description: "Milestone or task slug to inspect (e.g. 'milestone/M1'). Required unless unblocked=true." })),
+            unblocked: Type.Optional(Type.Boolean({ description: "If true, return all slugs whose every depends_on is done. Default false." })),
+        }),
+        async execute(_id: string, params: any) {
+            try {
+                if (params.unblocked) {
+                    const items = await palinodeFetch(cfg.palinodeApiUrl, "/depends/_unblocked");
+                    if (!items || items.length === 0) {
+                        return { content: [{ type: "text", text: "No unblocked items found." }] };
+                    }
+                    const lines = items.map((it: any) => `${it.slug}${it.status ? ` (${it.status})` : ""}`);
+                    return { content: [{ type: "text", text: `Unblocked items:\n${lines.join("\n")}` }] };
+                }
+                if (!params.slug) {
+                    return { content: [{ type: "text", text: "Error: 'slug' is required unless unblocked=true" }] };
+                }
+                const res = await palinodeFetch(cfg.palinodeApiUrl, `/depends/${encodeURIComponent(params.slug)}`);
+                return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+            } catch (err) {
+                return { content: [{ type: "text", text: `Palinode depends failed: ${String(err)}` }] };
+            }
+        },
+    }, { name: "palinode_depends" });
 
     // ========================================================================
     // Quick-save flag: -es at end of message → save to Palinode

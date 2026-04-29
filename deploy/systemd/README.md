@@ -11,7 +11,7 @@ Version-controlled, templated systemd user-unit files for the three palinode pro
 | Unit | Entry point | Default port |
 |------|-------------|-------------|
 | `palinode-api` | `uvicorn palinode.api.server:app` | 6340 |
-| `palinode-mcp` | `palinode-mcp-sse` | 6341 |
+| `palinode-mcp` | `palinode-mcp-sse` *(serves streamable-HTTP at `/mcp/` — name is historical)* | 6341 |
 | `palinode-watcher` | `python -m palinode.indexer.watcher` | — |
 
 `palinode-mcp` and `palinode-watcher` declare `Wants=palinode-api.service` so systemd starts them in the right order.
@@ -76,7 +76,7 @@ Expected response from `/health`:
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL for embeddings |
 | `EMBEDDING_MODEL` | `bge-m3` | Model name passed to Ollama |
 | `API_PORT` | `6340` | Port for `palinode-api` (uvicorn) |
-| `MCP_PORT` | `6341` | Port for `palinode-mcp-sse` |
+| `MCP_PORT` | `6341` | Port for `palinode-mcp-sse` (streamable-HTTP transport, configure clients with `"type": "http"` and `"url": "http://host:6341/mcp/"`) |
 
 All variables must be set or exported before running `install.sh`; the script exports defaults for any that are unset.
 
@@ -160,3 +160,70 @@ systemctl --user daemon-reload
 
 - **Remote Ollama:** prefer a stable hostname in `OLLAMA_URL` rather than a raw IP when the embedding service runs on another machine.
 - **Existing deployments:** if you already have hand-edited unit files, compare the rendered templates with your current values before replacing them.
+
+---
+
+## Nix flake (NixOS / nix-darwin)
+
+NixOS users can pull palinode directly from the flake without `pip install`.
+A `nixosModules.palinode` and `nixosModules.palinode-mcp` are provided.
+
+```nix
+# In your NixOS flake inputs:
+inputs.palinode.url = "github:phasespace-labs/palinode";
+
+# In your nixosSystem modules list:
+outputs = { nixpkgs, palinode, ... }: {
+  nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
+    modules = [
+      palinode.nixosModules.palinode
+      palinode.nixosModules.palinode-mcp
+      ({ ... }: {
+        services.palinode.enable = true;
+        services.palinode.dataDir = "/var/lib/palinode";
+        services.palinode.ollamaUrl = "http://your-ollama-host:11434";
+
+        # Optional: also run the MCP HTTP server on port 6341
+        services.palinode-mcp.enable = true;
+      })
+    ];
+  };
+};
+```
+
+### Module options — `services.palinode`
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enable` | `false` | Enable the API + watcher services |
+| `user` | `"palinode"` | System user |
+| `group` | `"palinode"` | System group |
+| `dataDir` | `"/var/lib/palinode"` | Memory directory (`PALINODE_DIR`) |
+| `apiHost` | `"127.0.0.1"` | Bind address for the API server |
+| `apiPort` | `6340` | API server port |
+| `ollamaUrl` | `"http://localhost:11434"` | Ollama base URL |
+| `embeddingModel` | `"bge-m3"` | Ollama embedding model name |
+| `bindIntent` | `null` | Set to `"public"` to suppress 0.0.0.0 binding warning |
+| `openFirewall` | `false` | Open `apiPort` in the NixOS firewall |
+
+### Module options — `services.palinode-mcp`
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enable` | `false` | Enable the MCP HTTP server |
+| `port` | `6341` | MCP server port (streamable-HTTP at `/mcp/`) |
+| `openFirewall` | `false` | Open `port` in the NixOS firewall |
+
+The MCP module shares `user`, `group`, `dataDir`, and `apiPort` from `services.palinode`.
+Enabling `services.palinode-mcp` automatically enables `services.palinode`.
+
+### Dev shell
+
+```bash
+nix develop github:phasespace-labs/palinode
+# then: pip install -e '.[dev]'
+```
+
+> **Note:** The Nix package build requires `sqlite-vec` and `mcp` to be packaged in nixpkgs.
+> These are marked with `# TODO` in `flake.nix`. Community contributions welcome — see
+> [palinode#38](https://github.com/phasespace-labs/palinode/issues/38).

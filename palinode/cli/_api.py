@@ -10,7 +10,7 @@ RequestError = httpx.RequestError
 
 
 class PalinodeAPI:
-    def __init__(self):
+    def __init__(self, client: httpx.Client | None = None) -> None:
         self.base_url = os.environ.get(
             "PALINODE_API",
             f"http://{config.services.api.host}:{config.services.api.port}",
@@ -19,7 +19,9 @@ class PalinodeAPI:
         # a header.  The API uses this when the body doesn't explicitly set
         # `source`, giving consistent provenance without each surface having
         # to thread a source default through every call site.
-        self.client = httpx.Client(
+        # An explicit client may be injected (e.g., for testing with an
+        # in-process ASGI transport). Fixes #197.
+        self.client = client or httpx.Client(
             base_url=self.base_url,
             timeout=30.0,
             headers={SAVE_SOURCE_HEADER: "cli"},
@@ -75,6 +77,7 @@ class PalinodeAPI:
         core: bool | None = None,
         confidence: float | None = None,
         metadata: dict | None = None,
+        external_refs: dict | None = None,
     ):
         payload: dict = {
             "content": content,
@@ -99,6 +102,8 @@ class PalinodeAPI:
             payload["confidence"] = confidence
         if metadata is not None:
             payload["metadata"] = metadata
+        if external_refs is not None:
+            payload["external_refs"] = external_refs
         params = {"sync": "true"} if sync else None
         response = self.client.post("/save", json=payload, params=params)
         response.raise_for_status()
@@ -289,8 +294,9 @@ class PalinodeAPI:
         response.raise_for_status()
         return response.json()
 
-    def get_history(self, file_path: str, limit: int = 20):
-        response = self.client.get(f"/history/{file_path}", params={"limit": limit}, timeout=10.0)
+    def get_history(self, file_path: str, limit: int = 20, detail: str = "summary"):
+        params: dict = {"limit": limit, "detail": detail}
+        response = self.client.get(f"/history/{file_path}", params=params, timeout=10.0)
         response.raise_for_status()
         return response.json()
 
@@ -371,6 +377,47 @@ class PalinodeAPI:
         if top_k is not None:
             payload["top_k"] = top_k
         response = self.client.post("/orphan-repair", json=payload, timeout=60.0)
+        response.raise_for_status()
+        return response.json()
+
+    def cluster_neighbors(
+        self,
+        file_path: str,
+        min_similarity: float | None = None,
+        top_k: int | None = None,
+    ):
+        """Find semantically related files not already linked to/from file_path (#235)."""
+        payload: dict = {"file_path": file_path}
+        if min_similarity is not None:
+            payload["min_similarity"] = min_similarity
+        if top_k is not None:
+            payload["top_k"] = top_k
+        response = self.client.post("/cluster-neighbors", json=payload, timeout=60.0)
+        response.raise_for_status()
+        return response.json()
+
+    def topic_coverage(
+        self,
+        query: str,
+        min_similarity: float | None = None,
+    ):
+        """Check whether any wiki page already covers a topic phrase (#235)."""
+        payload: dict = {"query": query}
+        if min_similarity is not None:
+            payload["min_similarity"] = min_similarity
+        response = self.client.post("/topic-coverage", json=payload, timeout=60.0)
+        response.raise_for_status()
+        return response.json()
+
+    def depends(self, slug: str) -> dict:
+        """Return the dependency neighbourhood for *slug* (#97)."""
+        response = self.client.get(f"/depends/{slug}", timeout=10.0)
+        response.raise_for_status()
+        return response.json()
+
+    def depends_unblocked(self) -> list:
+        """Return all slugs whose every depends_on is done (#97)."""
+        response = self.client.get("/depends/_unblocked", timeout=10.0)
         response.raise_for_status()
         return response.json()
 

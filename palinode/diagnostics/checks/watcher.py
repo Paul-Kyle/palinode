@@ -89,7 +89,9 @@ def _read_proc_environ(pid: int) -> dict[str, str]:
     """Parse /proc/<pid>/environ into a dict (Linux only).
 
     Returns an empty dict if the file is unreadable (permission denied,
-    process gone, or non-Linux platform).
+    process gone, or non-Linux platform). Monkeypatching the path prefix in
+    tests is handled by wrapping this call with a custom proc root — see
+    process_env._proc_root() for the pattern. On macOS this always returns {}.
     """
     environ_path = Path(f"/proc/{pid}/environ")
     try:

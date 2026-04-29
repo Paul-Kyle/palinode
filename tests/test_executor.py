@@ -1,7 +1,7 @@
 import os
 import tempfile
 import pytest
-from palinode.consolidation.executor import apply_operations
+from palinode.consolidation.executor import apply_operations, _nightly_merge_allowed
 
 @pytest.fixture
 def temp_memory_file():
@@ -94,7 +94,7 @@ def test_missing_fields_are_skipped(temp_memory_file):
         {"op": "SUPERSEDE", "new_text": "Replacement"},
         {"op": "ARCHIVE"},
     ])
-    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0}
+    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0}
 
 def test_missing_fact_id_is_noop(temp_memory_file):
     stats = apply_operations(temp_memory_file, [{"op": "SUPERSEDE", "id": "missing", "new_text": "Replacement"}])
@@ -108,7 +108,7 @@ def test_empty_operations_leave_file_unchanged(temp_memory_file):
     with open(temp_memory_file) as f:
         after = f.read()
     assert before == after
-    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0}
+    assert stats == {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0}
 
 
 def test_retract_operation(temp_memory_file):
@@ -164,3 +164,97 @@ def test_retract_missing_id_is_skipped(temp_memory_file):
     ops = [{"op": "RETRACT", "reason": "no id"}]
     stats = apply_operations(temp_memory_file, ops)
     assert stats["retracted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Nightly MERGE policy tests (#202)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def temp_same_day_file():
+    """Two facts on the same date — nightly MERGE should be allowed."""
+    content = """---
+id: project-beta
+category: project
+---
+
+# Project Beta
+
+- [2026-04-28] Morning session note <!-- fact:s1 -->
+- [2026-04-28] Afternoon session note <!-- fact:s2 -->
+- [2026-04-27] Yesterday's note <!-- fact:s3 -->
+"""
+    fd, path = tempfile.mkstemp(suffix=".md")
+    with os.fdopen(fd, 'w') as f:
+        f.write(content)
+    yield path
+    os.remove(path)
+
+
+def test_nightly_merge_accepts_same_day(temp_same_day_file):
+    """nightly_policy=True: MERGE of same-date facts is allowed."""
+    ops = [{"op": "MERGE", "ids": ["s1", "s2"], "new_text": "[2026-04-28] Combined daily note"}]
+    stats = apply_operations(temp_same_day_file, ops, nightly_policy=True)
+    assert stats["merged"] == 1
+    assert stats["merge_rejected"] == 0
+    with open(temp_same_day_file) as f:
+        content = f.read()
+    assert "Combined daily note" in content
+    # s2 should be gone after the merge
+    assert "<!-- fact:s2 -->" not in content
+
+
+def test_nightly_merge_rejects_cross_date(temp_same_day_file):
+    """nightly_policy=True: MERGE spanning different dates is rejected."""
+    ops = [{"op": "MERGE", "ids": ["s1", "s3"], "new_text": "[2026-04-28] Cross-date merged"}]
+    stats = apply_operations(temp_same_day_file, ops, nightly_policy=True)
+    assert stats["merged"] == 0
+    assert stats["merge_rejected"] == 1
+    # File content should be unchanged
+    with open(temp_same_day_file) as f:
+        content = f.read()
+    assert "Morning session note" in content
+    assert "Yesterday's note" in content
+
+
+def test_nightly_merge_rejects_undated_fact(temp_same_day_file):
+    """nightly_policy=True: MERGE involving a fact without a date is rejected."""
+    # Patch in an undated fact
+    with open(temp_same_day_file, "a") as f:
+        f.write("- Undated note <!-- fact:s4 -->\n")
+    ops = [{"op": "MERGE", "ids": ["s1", "s4"], "new_text": "[2026-04-28] Merged"}]
+    stats = apply_operations(temp_same_day_file, ops, nightly_policy=True)
+    assert stats["merged"] == 0
+    assert stats["merge_rejected"] == 1
+
+
+def test_nightly_policy_false_allows_cross_date_merge(temp_same_day_file):
+    """Without nightly_policy, cross-date MERGE goes through (weekly pass behaviour)."""
+    ops = [{"op": "MERGE", "ids": ["s1", "s3"], "new_text": "[2026-04-28] Cross-date merged"}]
+    stats = apply_operations(temp_same_day_file, ops, nightly_policy=False)
+    assert stats["merged"] == 1
+    assert stats["merge_rejected"] == 0
+
+
+def test_nightly_merge_allowed_helper_same_day():
+    """Unit test for _nightly_merge_allowed: returns True for same-date facts."""
+    content = (
+        "- [2026-04-28] Note A <!-- fact:a -->\n"
+        "- [2026-04-28] Note B <!-- fact:b -->\n"
+    )
+    assert _nightly_merge_allowed(content, ["a", "b"]) is True
+
+
+def test_nightly_merge_allowed_helper_cross_date():
+    """Unit test for _nightly_merge_allowed: returns False for cross-date facts."""
+    content = (
+        "- [2026-04-28] Note A <!-- fact:a -->\n"
+        "- [2026-04-27] Note B <!-- fact:b -->\n"
+    )
+    assert _nightly_merge_allowed(content, ["a", "b"]) is False
+
+
+def test_nightly_merge_allowed_helper_missing_fact():
+    """Unit test for _nightly_merge_allowed: returns False when a fact ID is absent."""
+    content = "- [2026-04-28] Note A <!-- fact:a -->\n"
+    assert _nightly_merge_allowed(content, ["a", "missing"]) is False

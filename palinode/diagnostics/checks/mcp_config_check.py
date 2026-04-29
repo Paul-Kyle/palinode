@@ -13,6 +13,7 @@ behaviour stays in lock-step with `palinode mcp-config --diagnose`.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from palinode.cli.mcp_config import (
@@ -72,11 +73,29 @@ def _gather_results() -> list[ConfigResult]:
 @register(tags=("fast",))
 def mcp_config_homes(ctx: DoctorContext) -> CheckResult:
     """Warn when multiple MCP config files have divergent palinode entries."""
+    ssh_origin = os.environ.get("SSH_CONNECTION")
 
     results = _gather_results()
     with_entries = [r for r in results if r.entry is not None and r.error is None]
 
     if not with_entries:
+        # SSH-stdio deployment: palinode runs on the remote host; the MCP
+        # client config lives on the originating machine and cannot be
+        # inspected from here. Report informational rather than misleading
+        # "run palinode init". Fixes #255.
+        if ssh_origin:
+            client_ip = ssh_origin.split()[0]
+            return CheckResult(
+                name="mcp_config_homes",
+                severity="info",
+                passed=True,
+                message=(
+                    f"No MCP client config on this host. Running over SSH stdio "
+                    f"(origin: {client_ip}); the MCP client config lives on the "
+                    f"originating host and cannot be inspected from here."
+                ),
+                remediation=None,
+            )
         return CheckResult(
             name="mcp_config_homes",
             severity="info",

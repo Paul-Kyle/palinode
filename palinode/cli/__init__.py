@@ -13,7 +13,7 @@ from palinode.cli.consolidate import consolidate
 from palinode.cli.trigger import trigger
 from palinode.cli.doctor import doctor
 from palinode.cli.manage import reindex, rebuild_fts, split_layers, bootstrap_ids, migrate_mem0
-from palinode.cli.git import blame, history, rollback, push
+from palinode.cli.git import blame, history, rollback, push, timeline
 from palinode.cli.query import entities
 from palinode.cli.session_end import session_end
 from palinode.cli.read import read
@@ -24,8 +24,11 @@ from palinode.cli.prompt import prompt
 from palinode.cli.migrate import migrate
 from palinode.cli.init import init
 from palinode.cli.mcp_config import mcp_config
-from palinode.cli.embedding_tools import dedup_suggest, orphan_repair
+from palinode.cli.embedding_tools import dedup_suggest, orphan_repair, cluster_neighbors, topic_coverage
 from palinode.cli.obsidian_sync import obsidian_sync
+from palinode.cli.retrieval_stats import retrieval_stats
+from palinode.cli.import_vault import import_cmd
+from palinode.cli.depends import depends
 
 def _print_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     if not value or ctx.resilient_parsing:
@@ -78,6 +81,7 @@ main.add_command(migrate_mem0)
 # Git
 main.add_command(blame)
 main.add_command(history)
+main.add_command(timeline)
 main.add_command(rollback)
 main.add_command(push)
 
@@ -101,12 +105,23 @@ main.add_command(init)
 # Diagnostics
 main.add_command(mcp_config, name="mcp-config")
 
-# Embedding tools (#210 — Obsidian wiki maintenance helpers)
+# Embedding tools (#210, #235 — Obsidian wiki maintenance helpers)
 main.add_command(dedup_suggest)
 main.add_command(orphan_repair)
+main.add_command(cluster_neighbors)
+main.add_command(topic_coverage)
 
 # Obsidian integration — backfill / migration (#210, Deliverable E)
 main.add_command(obsidian_sync, name="obsidian-sync")
+
+# Instrumentation (#256 — ADR-007 prerequisite)
+main.add_command(retrieval_stats, name="retrieval-stats")
+
+# Vault import (#236)
+main.add_command(import_cmd, name="import")
+
+# Dependency graph (#97)
+main.add_command(depends)
 
 @main.command()
 @click.option("--watcher/--no-watcher", default=True, help="Run memory watcher")

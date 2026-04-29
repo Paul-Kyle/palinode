@@ -192,7 +192,11 @@ def blame(file_path: str, search: str | None = None) -> str:
     return header + blame_output
 
 
-def history(file_path: str, limit: int = 20) -> list[dict[str, str]]:
+def history(
+    file_path: str,
+    limit: int = 20,
+    detail: str = "summary",
+) -> list[dict[str, str]]:
     """Show the change history of a memory file.
 
     Returns a list of commits that touched this file, with diff stats.
@@ -201,9 +205,14 @@ def history(file_path: str, limit: int = 20) -> list[dict[str, str]]:
     Args:
         file_path: Relative path within the data repo.
         limit: Maximum number of commits to return.
+        detail: ``"summary"`` (default) returns hash/date/message/stats;
+            ``"full"`` additionally includes the full unified diff for each
+            commit so the caller can see exactly what changed (commit-level
+            evolution view, formerly ``palinode_timeline``).
 
     Returns:
         List of dicts with keys: hash, date, message, stats.
+        When ``detail="full"``, each dict also has a ``diff`` key.
         Empty list if no history found.
     """
     file_path = _resolve_memory_path(file_path)
@@ -228,12 +237,18 @@ def history(file_path: str, limit: int = 20) -> list[dict[str, str]]:
             stat = _run_git("diff", "--stat", f"{hash_short}^..{hash_short}", "--", file_path)
             stat_line = stat.stdout.strip().split("\n")[-1] if stat.stdout.strip() else ""
             stats = stat_line.strip() if stat_line and "changed" in stat_line else ""
-            commits.append({
+            commit: dict[str, str] = {
                 "hash": hash_short,
                 "date": date,
                 "message": message,
                 "stats": stats,
-            })
+            }
+            if detail == "full":
+                diff_result = _run_git(
+                    "show", "--unified=3", f"{hash_short}", "--", file_path
+                )
+                commit["diff"] = diff_result.stdout.strip()
+            commits.append(commit)
 
     return commits
 
