@@ -11,12 +11,17 @@ B. Re-saving identical content was a silent no-op even when the original embed
    presence of both index entries and re-embeds when either is missing,
    regardless of ``content_hash`` equality.
 
+C. Save-side frontmatter omitted ``last_updated`` on initial write (#177).
+   Fix: ``created_at`` and ``last_updated`` are both written on first save so
+   the freshness checker does not flag a brand-new memory as stale.
+
 Mocks the embedder so tests don't require Ollama.
 """
 from __future__ import annotations
 
 from unittest.mock import patch
 
+import frontmatter
 import pytest
 from fastapi.testclient import TestClient
 
@@ -327,3 +332,38 @@ class TestIndexFileVerifiesIndexPresence:
         assert outcome["chunks_unchanged"] >= 1
         assert outcome["chunks_written"] == 0
         assert outcome["chunks_reembedded"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #177: save-side frontmatter must include last_updated on initial write
+# ---------------------------------------------------------------------------
+
+
+class TestFrontmatterLastUpdatedOnInitialSave:
+    """POST /save must write ``last_updated`` equal to ``created_at`` on the
+    first write so the freshness checker does not flag a brand-new memory as
+    stale (the missing-last_updated case)."""
+
+    def test_initial_save_frontmatter_has_last_updated(self, client):
+        """Fresh save → on-disk file has both created_at and last_updated."""
+        with _patch_scan(), _patch_embed_ok():
+            res = client.post(
+                "/save",
+                json={
+                    "content": "Frontmatter last_updated sentinel for #177.",
+                    "type": "Insight",
+                    "slug": "frontmatter-last-updated-177",
+                },
+            )
+        assert res.status_code == 200, res.text
+        file_path = res.json()["file_path"]
+
+        post = frontmatter.load(file_path)
+        meta = post.metadata
+
+        assert "created_at" in meta, "frontmatter missing created_at"
+        assert "last_updated" in meta, "frontmatter missing last_updated (#177)"
+        # On first write both timestamps should be identical (same UTC instant).
+        assert str(meta["created_at"]) == str(meta["last_updated"]), (
+            f"created_at ({meta['created_at']!r}) != last_updated ({meta['last_updated']!r})"
+        )

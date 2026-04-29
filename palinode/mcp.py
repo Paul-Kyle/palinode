@@ -166,7 +166,24 @@ def _format_results(results: list[dict[str, Any]]) -> str:
         score_pct = int(r.get("score", 0) * 100)
         freshness = r.get("freshness")
         fresh_label = f" ✓ {freshness}" if freshness == "valid" else (f" ⚠ {freshness}" if freshness == "stale" else "")
-        parts.append(f"[{rel}] ({score_pct}% match){fresh_label}\n{r.get('content', '').strip()}")
+        # Render external_refs when present in result metadata (#115).
+        meta = r.get("metadata") or {}
+        ext_refs = meta.get("external_refs")
+        refs_label = ""
+        if ext_refs and isinstance(ext_refs, dict):
+            _PRETTY_KEYS = {
+                "gitlab_mr": "MR",
+                "gitlab_issue": "Issue",
+                "gitlab_pipeline": "Pipeline",
+                "github_pr": "PR",
+                "linear_issue": "Linear",
+                "jira_issue": "Jira",
+            }
+            ref_parts = [
+                f"{_PRETTY_KEYS.get(k, k)}: {v}" for k, v in ext_refs.items()
+            ]
+            refs_label = " [" + ", ".join(ref_parts) + "]"
+        parts.append(f"[{rel}] ({score_pct}% match){fresh_label}{refs_label}\n{r.get('content', '').strip()}")
     return "\n\n---\n\n".join(parts)
 
 
@@ -399,6 +416,16 @@ async def list_tools() -> list[types.Tool]:
                             "downstream consolidation passes."
                         ),
                     },
+                    "external_refs": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": (
+                            "Optional dict of SDLC object references. "
+                            "Recognised keys: gitlab_mr, gitlab_issue, "
+                            "gitlab_pipeline, github_pr, linear_issue, "
+                            "jira_issue. Free-form keys also accepted (#115)."
+                        ),
+                    },
                     "source": {
                         "type": "string",
                         "description": "Source surface that created this memory (e.g., 'claude-code', 'cursor', 'api'). Auto-detected if omitted.",
@@ -449,7 +476,8 @@ async def list_tools() -> list[types.Tool]:
             name="palinode_history",
             description=(
                 "Show the change history of a memory file. Tracks renames (--follow) "
-                "and includes diff stats per commit."
+                "and includes diff stats per commit. Use detail='full' for the commit-level "
+                "evolution view (previously palinode_timeline)."
             ),
             inputSchema={
                 "type": "object",
@@ -463,11 +491,47 @@ async def list_tools() -> list[types.Tool]:
                         "description": "Maximum number of commits to show (default 20)",
                         "default": 20,
                     },
+                    "detail": {
+                        "type": "string",
+                        "description": (
+                            "'summary' (default) returns hash/date/message/stats. "
+                            "'full' additionally includes the unified diff body per commit "
+                            "(commit-level evolution view, formerly palinode_timeline)."
+                        ),
+                        "enum": ["summary", "full"],
+                        "default": "summary",
+                    },
                 },
                 "required": ["file_path"],
             },
             annotations=types.ToolAnnotations(
                 title="File History",
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+            ),
+        ),
+        types.Tool(
+            name="palinode_timeline",
+            description=(
+                "Deprecated: use palinode_history with detail='full' instead. "
+                "Shows commit-level evolution of a memory file including unified diffs per commit."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "File path relative to the memory directory (e.g. people/alice.md)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of commits to show (default 20)",
+                        "default": 20,
+                    },
+                },
+                "required": ["file_path"],
+            },
+            annotations=types.ToolAnnotations(
+                title="File Timeline (deprecated — use palinode_history detail=full)",
                 readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
             ),
         ),
@@ -801,6 +865,70 @@ async def list_tools() -> list[types.Tool]:
             ),
         ),
         types.Tool(
+            name="palinode_cluster_neighbors",
+            description=(
+                "Given a memory file path, find the top-K semantically related files that are NOT "
+                "currently linked to or from it (no existing [[wikilink]] in either direction). "
+                "Use during wiki-maintenance passes to surface implicit relationships that no "
+                "wikilink yet captures — the LLM can then propose new cross-links. "
+                "Preprocessing strips wikilink syntax and the auto-generated `## See also` footer "
+                "so notes linking the same entities don't false-positive as related."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative file path (e.g. 'decisions/palinode-arch.md') to find unlinked semantic neighbours for.",
+                    },
+                    "min_similarity": {
+                        "type": "number",
+                        "description": "Minimum cosine similarity to surface (0.0–1.0). Default 0.70.",
+                        "default": 0.70,
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Maximum number of candidate files to return. Default 10.",
+                        "default": 10,
+                    },
+                },
+                "required": ["file_path"],
+            },
+            annotations=types.ToolAnnotations(
+                title="Cluster Neighbors",
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+            ),
+        ),
+        types.Tool(
+            name="palinode_topic_coverage",
+            description=(
+                "Given a topic phrase (not a file), check whether any wiki page already covers it. "
+                "Returns {covered: bool, best_match: str | null, similarity: float}. "
+                "Use BEFORE ingesting new content to ask 'is this already covered?'. "
+                "Different framing from palinode_dedup_suggest: takes a short topic phrase rather "
+                "than full draft content, and answers the binary 'already covered?' question."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Topic phrase to check coverage for (e.g. 'machine learning deployment').",
+                    },
+                    "min_similarity": {
+                        "type": "number",
+                        "description": "Minimum cosine similarity to count as 'covered' (0.0–1.0). Default 0.78.",
+                        "default": 0.78,
+                    },
+                },
+                "required": ["query"],
+            },
+            annotations=types.ToolAnnotations(
+                title="Topic Coverage",
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+            ),
+        ),
+        types.Tool(
             name="palinode_doctor",
             description=(
                 "Fast palinode health check (<500ms). "
@@ -858,6 +986,38 @@ async def list_tools() -> list[types.Tool]:
             annotations=types.ToolAnnotations(
                 title="Manage Prompts",
                 readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False,
+            ),
+        ),
+        types.Tool(
+            name="palinode_depends",
+            description=(
+                "Return the dependency tree for a milestone or task slug, or list all unblocked items. "
+                "Reads depends_on / blocks / parallel_with frontmatter from ProjectSnapshot files. "
+                "Set unblocked=true to answer 'what can I work on right now?' across all slugs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": (
+                            "Milestone or task slug to inspect (e.g. 'milestone/M1'). "
+                            "Required unless unblocked=true."
+                        ),
+                    },
+                    "unblocked": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, return the list of all slugs whose every depends_on is done "
+                            "(ignores slug). Default false."
+                        ),
+                        "default": False,
+                    },
+                },
+            },
+            annotations=types.ToolAnnotations(
+                title="Dependency Tree",
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
             ),
         ),
     ]
@@ -998,6 +1158,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 body["metadata"] = arguments["metadata"]
             if arguments.get("confidence") is not None:
                 body["confidence"] = float(arguments["confidence"])
+            if arguments.get("external_refs") is not None:
+                body["external_refs"] = arguments["external_refs"]
 
             resp = await _post("/save", json=body)
             if resp.status_code != 200:
@@ -1027,7 +1189,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
         elif name == "palinode_history":
             file_path = arguments["file_path"]
             limit = int(arguments.get("limit", 20))
-            resp = await _get(f"/history/{file_path}", params={"limit": str(limit)})
+            detail = arguments.get("detail", "summary")
+            if detail not in ("summary", "full"):
+                return _text("Error: detail must be 'summary' or 'full'")
+            resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": detail})
             if resp.status_code != 200:
                 return _text(f"Error: {resp.text}")
             data = resp.json()
@@ -1038,8 +1203,32 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
                 if c.get("stats"):
                     line += f"\n  {c['stats']}"
+                if detail == "full" and c.get("diff"):
+                    line += f"\n{c['diff']}"
                 lines.append(line)
-            return _text("\n".join(lines))
+            return _text("\n\n---\n\n".join(lines) if detail == "full" else "\n".join(lines))
+
+        # ── timeline (deprecated alias for history detail=full) ───────────
+        elif name == "palinode_timeline":
+            logger.warning("palinode_timeline is deprecated — use palinode_history with detail='full'")
+            file_path = arguments["file_path"]
+            limit = int(arguments.get("limit", 20))
+            resp = await _get(f"/history/{file_path}", params={"limit": str(limit), "detail": "full"})
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            data = resp.json()
+            if not data.get("history"):
+                return _text("No history found.")
+            lines = []
+            for c in data["history"]:
+                line = f"{c['hash']} | {c['date'][:10]} | {c['message']}"
+                if c.get("stats"):
+                    line += f"\n  {c['stats']}"
+                if c.get("diff"):
+                    line += f"\n{c['diff']}"
+                lines.append(line)
+            deprecation_note = "[DEPRECATED] palinode_timeline is deprecated — use palinode_history with detail='full' instead.\n\n"
+            return _text(deprecation_note + "\n\n---\n\n".join(lines))
 
         # ── entities ──────────────────────────────────────────────────────
         elif name == "palinode_entities":
@@ -1237,6 +1426,46 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
                 lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
             return _text("\n\n".join(lines))
 
+        # ── cluster_neighbors ─────────────────────────────────────────────
+        elif name == "palinode_cluster_neighbors":
+            body: dict[str, Any] = {"file_path": arguments.get("file_path", "")}
+            if arguments.get("min_similarity") is not None:
+                body["min_similarity"] = float(arguments["min_similarity"])
+            if arguments.get("top_k") is not None:
+                body["top_k"] = int(arguments["top_k"])
+            resp = await _post("/cluster-neighbors", json=body, timeout=60.0)
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            data = resp.json()
+            if not data:
+                return _text("No unlinked semantic neighbours found above threshold.")
+            lines = []
+            for r in data:
+                fp = r.get("file_path", "")
+                rel = fp.rsplit("/palinode/", 1)[-1] if "/palinode/" in fp else fp
+                pct = int(r.get("similarity", 0) * 100)
+                snippet = (r.get("snippet") or "").strip().replace("\n", " ")[:160]
+                lines.append(f"[{rel}] ({pct}% similar)\n  {snippet}")
+            return _text("\n\n".join(lines))
+
+        # ── topic_coverage ────────────────────────────────────────────────
+        elif name == "palinode_topic_coverage":
+            body: dict[str, Any] = {"query": arguments.get("query", "")}
+            if arguments.get("min_similarity") is not None:
+                body["min_similarity"] = float(arguments["min_similarity"])
+            resp = await _post("/topic-coverage", json=body, timeout=60.0)
+            if resp.status_code != 200:
+                return _text(f"Error: {resp.text}")
+            data = resp.json()
+            covered = data.get("covered", False)
+            best = data.get("best_match")
+            sim = data.get("similarity", 0.0)
+            if covered and best:
+                fp = best.rsplit("/palinode/", 1)[-1] if "/palinode/" in best else best
+                pct = int(sim * 100)
+                return _text(f"COVERED — {fp} ({pct}% similar). Consider updating the existing page.")
+            return _text(f"NOT COVERED — no existing page matches above threshold (best similarity: {sim:.2f}). Safe to create new.")
+
         # ── doctor ────────────────────────────────────────────────────────
         elif name == "palinode_doctor":
             resp = await _get("/doctor", params={"fast": "true"}, timeout=10.0)
@@ -1314,6 +1543,30 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> list[types.Tex
 
             else:
                 return _text(f"Unknown action: {action}. Use 'list', 'read', or 'activate'.")
+
+        # ── depends ───────────────────────────────────────────────────────
+        elif name == "palinode_depends":
+            if arguments.get("unblocked"):
+                resp = await _get("/depends/_unblocked")
+                if resp.status_code != 200:
+                    return _text(f"API Error: {resp.text}")
+                items = resp.json()
+                if not items:
+                    return _text("No unblocked items found.")
+                lines = [
+                    f"{it['slug']}" + (f" (status={it['status']})" if it.get("status") else "")
+                    for it in items
+                ]
+                return _text("Unblocked items:\n" + "\n".join(lines))
+            else:
+                slug = arguments.get("slug", "").strip()
+                if not slug:
+                    return _text("Error: 'slug' is required unless unblocked=true")
+                resp = await _get(f"/depends/{slug}")
+                if resp.status_code != 200:
+                    return _text(f"API Error: {resp.text}")
+                import json as _json
+                return _text(_json.dumps(resp.json(), indent=2))
 
         else:
             return _text(f"Unknown tool: {name}")

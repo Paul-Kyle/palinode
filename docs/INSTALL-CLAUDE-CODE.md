@@ -286,7 +286,7 @@ If something doesn't look right, run `palinode doctor` from your terminal for a 
 | `palinode_read` | Read the full content of a specific memory file |
 | `palinode_ingest` | Fetch a URL and save as research reference |
 | `palinode_status` | File counts, index health, entity graph size |
-| `palinode_history` | Git history for a file with diff stats and rename tracking |
+| `palinode_history` | Git history for a file with diff stats and rename tracking; use `detail="full"` for per-commit diffs (commit-level evolution view) |
 | `palinode_entities` | List known entities and their relationships |
 | `palinode_consolidate` | Run or preview the weekly compaction job |
 | `palinode_diff` | See what changed in memory recently (git diff) |
@@ -326,6 +326,34 @@ The skill auto-fires when:
 - Making a decision → saves with rationale
 - ~30 min since last save → saves progress
 - Session ending → captures structured summary
+
+---
+
+## Cursor
+
+MCP config for Cursor lives at `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-level). See [MCP-INSTALL-RECIPES.md](MCP-INSTALL-RECIPES.md) for the complete Cursor workflow.
+
+**Session skill:** copy to `.cursor/skills/palinode-session/` (project) or `~/.cursor/skills/` (global, if supported by your Cursor build).
+
+```bash
+mkdir -p .cursor/skills
+cp -r /path/to/palinode/skill/palinode-session .cursor/skills/
+```
+
+Cursor does not use `CLAUDE.md` — add memory instructions to your `.cursorrules` or project README if desired.
+
+---
+
+## Codex CLI
+
+Codex CLI has no skill system. Configure MCP in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.palinode]
+url = "http://your-server:6341/mcp/"
+```
+
+The palinode tools (`palinode_search`, `palinode_save`, etc.) will be available in Codex conversations once the server is reachable.
 
 ---
 

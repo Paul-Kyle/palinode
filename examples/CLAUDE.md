@@ -1,36 +1,74 @@
 # CLAUDE.md — Palinode Memory Integration
 
-Add this to any project's CLAUDE.md to enable persistent memory across sessions.
+Copy this block into your project's `CLAUDE.md` (or run `palinode init` to
+scaffold it automatically).
+
+---
 
 ## Memory (Palinode)
 
-This project uses Palinode for persistent memory (MCP server: palinode).
+This project uses Palinode for persistent memory via MCP (server name: `palinode`).
 
-### At session start:
-- Call `palinode_search` with the current task or project name for prior context
-- Check `palinode_status` if unsure whether the memory system is connected
+### At session start
+- Call `palinode_search` with the current task or project name to pull prior
+  context. Surface any relevant decisions, blockers, or insights from previous
+  sessions before starting work.
+- If the MCP server is down, fall back to the CLI: `palinode search "<query>"`.
 
-### During work:
-- After each major milestone (tests pass, feature complete, bug fixed, PR ready):
-  call `palinode_save` with the decision or outcome
-- When making architectural or design decisions:
-  call `palinode_save` with the decision AND the rationale (why, not just what)
-- Every ~30 minutes of active work: call `palinode_save` with a brief progress note
-- When discovering something surprising or reusable:
-  call `palinode_save` with type "Insight"
+### During work
+- After each milestone (tests pass, feature shipped, bug root-caused), call
+  `palinode_save` with the outcome. Include *why*, not just *what*.
+- When making an architectural or design decision, save the decision AND the
+  rationale as `type="Decision"`.
+- Save surprising reusable findings as `type="Insight"`.
+- Every ~30 minutes of active work, save a one-line progress note.
 
-### At session end:
+### At session end — including `/clear`
 - Call `palinode_session_end` with:
-  - `summary`: what was accomplished (1-2 sentences)
-  - `decisions`: key decisions made (array of strings)
-  - `blockers`: open questions or next steps (array of strings)
-  - `project`: project slug if applicable
+  - `summary` — what was accomplished (1-2 sentences)
+  - `decisions` — key decisions made (array of strings, with rationale)
+  - `blockers` — open questions or next steps (array of strings)
+  - `project` — the project slug
+- **`/clear` counts as session end.** Call `palinode_session_end` *before*
+  running `/clear`. A SessionEnd hook captures a fallback snapshot, but an
+  agent-synthesized summary is far richer than a transcript tail.
+- The user may type `/ps` ("Palinode Save") or `/wrap` ("wrap this up") as
+  shortcuts. These are **deterministic** — each maps to exactly one tool:
+  - `/ps` → always `palinode_save` with `type="ProjectSnapshot"` (mid-session)
+  - `/wrap` → always `palinode_session_end` with summary/decisions/blockers
+    (before `/clear`)
+  Never substitute one for the other. Two commands, two operations, zero
+  ambiguity.
 
-### What NOT to save:
-- Raw code (git handles that)
-- Step-by-step debug logs (save the resolution, not the journey)
-- Trivial changes ("fixed typo" — not worth a memory)
+### What NOT to save
+- Raw code (git handles that).
+- Step-by-step debug logs — save the resolution, not the journey.
+- Trivial changes ("fixed typo" is not worth a memory).
 
-### If MCP is not connected:
-- Use CLI equivalents: `palinode search "query"`, `palinode save "content" --type Decision`
-- Check connection: `palinode status` or `palinode_status()`
+### If MCP is not connected
+- Use the CLI: `palinode search "<query>"`, `palinode save "<content>" --type Decision`
+- Check connection: `palinode status` or the `palinode_status` tool
+
+---
+
+## Getting this set up
+
+Fastest path — from your project root:
+
+```bash
+palinode init
+```
+
+That scaffolds:
+
+- `.claude/CLAUDE.md` (appends this block if one already exists)
+- `.claude/settings.json` (registers the SessionEnd hook)
+- `.claude/hooks/palinode-session-end.sh` (auto-captures on `/clear` and exit)
+- `.mcp.json` (points Claude Code at the `palinode` MCP server)
+
+Re-run with `--dry-run` to preview, or `--force` to overwrite. See
+`examples/hooks/` for the standalone hook files if you prefer a manual setup.
+
+## Obsidian users
+
+If you also use Obsidian, point it at your Palinode directory and you get the graph view, backlinks, and Bases on top of Palinode's hybrid search. Run `palinode init --obsidian /path/to/vault` for the opinionated scaffold. The full guide — quickstart, the wiki-maintenance contract, the embedding tools, and migration paths — is in [`docs/OBSIDIAN.md`](../docs/OBSIDIAN.md).

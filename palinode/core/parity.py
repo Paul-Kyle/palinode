@@ -208,23 +208,7 @@ REGISTRY: tuple[Operation, ...] = (
         mcp_tool="palinode_search",
         api_endpoint=("POST", "/search"),
         plugin_tool="palinode_search",
-        known_drift={
-            # #176: plugin TS schema for ``palinode_search`` only exposes
-            # ``query``, ``category``, ``limit`` — the six post-#163 search
-            # filters need to be declared in the plugin's TypeBox schema in
-            # ``plugin/index.ts`` and wired through to the API call.  All
-            # 11 plugin known_drift entries (search × 6 + save × 5) are
-            # tracked together in #176; each closes when the plugin
-            # declares the param and the entry is removed from this dict
-            # (the TS parity test fails otherwise — that's the forcing
-            # function).
-            ("plugin", "threshold"): 176,
-            ("plugin", "since_days"): 176,
-            ("plugin", "types"): 176,
-            ("plugin", "date_after"): 176,
-            ("plugin", "date_before"): 176,
-            ("plugin", "include_daily"): 176,
-        },
+        known_drift={},
     ),
     # ── save ────────────────────────────────────────────────────────────────
     # NOTE on ``ps``: deliberately *not* a canonical parameter.  CLI ``--ps``
@@ -242,6 +226,7 @@ REGISTRY: tuple[Operation, ...] = (
             CanonicalParam(name="project", type="string"),
             CanonicalParam(name="metadata", type="object"),
             CanonicalParam(name="confidence", type="number"),
+            CanonicalParam(name="external_refs", type="object"),
             CanonicalParam(name="title", type="string"),
             CanonicalParam(name="slug", type="string"),
             CanonicalParam(name="core", type="boolean"),
@@ -251,24 +236,7 @@ REGISTRY: tuple[Operation, ...] = (
         mcp_tool="palinode_save",
         api_endpoint=("POST", "/save"),
         plugin_tool="palinode_save",
-        known_drift={
-            # #176: plugin TS schema for ``palinode_save`` lacks
-            # ``project`` (originally #159), ``metadata``, ``confidence``,
-            # ``title``, ``source`` (the latter four originally #166).
-            # All five — together with the six search-side gaps — are now
-            # tracked under #176, the dedicated plugin-schema-closure
-            # tracking issue.  ``type`` was in this list during ADR-010's
-            # first wave, but the plugin's ``palinode_save`` TypeBox
-            # schema actually declares ``type``; the TS parity test at
-            # ``plugin/test/parity.test.ts`` surfaced the stale entry, so
-            # it has been removed.  ``title`` and ``source`` are real
-            # plugin gaps surfaced by the same test.
-            ("plugin", "project"): 176,
-            ("plugin", "metadata"): 176,
-            ("plugin", "confidence"): 176,
-            ("plugin", "title"): 176,
-            ("plugin", "source"): 176,
-        },
+        known_drift={},
     ),
     # ── consolidate ─────────────────────────────────────────────────────────
     Operation(
@@ -337,6 +305,53 @@ REGISTRY: tuple[Operation, ...] = (
         api_endpoint=("GET", "/blame/{file_path:path}"),
         exempt_surfaces=frozenset({"plugin"}),
         known_drift={},
+    ),
+    # ── cluster_neighbors (#235) ─────────────────────────────────────────────
+    Operation(
+        name="cluster_neighbors",
+        canonical_params=(
+            CanonicalParam(name="file_path", type="string", required=True),
+            CanonicalParam(name="min_similarity", type="number"),
+            CanonicalParam(name="top_k", type="integer"),
+        ),
+        cli_command="cluster-neighbors",
+        mcp_tool="palinode_cluster_neighbors",
+        api_endpoint=("POST", "/cluster-neighbors"),
+        exempt_surfaces=frozenset({"plugin"}),
+        known_drift={},
+    ),
+    # ── topic_coverage (#235) ────────────────────────────────────────────────
+    Operation(
+        name="topic_coverage",
+        canonical_params=(
+            CanonicalParam(name="query", type="string", required=True),
+            CanonicalParam(name="min_similarity", type="number"),
+        ),
+        cli_command="topic-coverage",
+        mcp_tool="palinode_topic_coverage",
+        api_endpoint=("POST", "/topic-coverage"),
+        exempt_surfaces=frozenset({"plugin"}),
+        known_drift={},
+    ),
+    # ── depends (#97) ────────────────────────────────────────────────────────
+    # The `unblocked` mode is exposed as a separate REST endpoint
+    # (GET /depends/_unblocked) rather than a query param on
+    # GET /depends/{slug}, so it does not appear in the API endpoint's
+    # function signature.  Recorded as known drift to keep the parity test
+    # from failing; the endpoint exists but under a different URL.
+    Operation(
+        name="depends",
+        canonical_params=(
+            CanonicalParam(name="slug", type="string"),
+            CanonicalParam(name="unblocked", type="boolean"),
+        ),
+        cli_command="depends",
+        mcp_tool="palinode_depends",
+        api_endpoint=("GET", "/depends/{slug:path}"),
+        plugin_tool="palinode_depends",
+        known_drift={
+            ("api", "unblocked"): 97,
+        },
     ),
 )
 

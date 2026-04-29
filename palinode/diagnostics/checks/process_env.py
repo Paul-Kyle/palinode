@@ -48,7 +48,11 @@ _KINDS = ("palinode-api", "palinode-mcp", "palinode-watcher")
 
 
 def _proc_root() -> Path:
-    """Override hook for tests."""
+    """Return the /proc filesystem root. Monkeypatched in tests to point at a tmp dir.
+
+    macOS: /proc does not exist — callers guard with ``platform.system() != "Linux"``
+    before calling any function that relies on this path.
+    """
     return Path("/proc")
 
 
@@ -105,6 +109,8 @@ def _scan_processes(proc_root: Path) -> list[dict[str, object]]:
     if not proc_root.is_dir():
         return []
 
+    # Skip our own PID — when doctor runs inside palinode-api, the API process
+    # would otherwise appear as a "drift" candidate against itself.
     me = os.getpid()
     found: list[dict[str, object]] = []
 

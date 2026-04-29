@@ -132,8 +132,15 @@ def cli_with_api_redirect(api_client):
     same app the test uses for ``TestClient`` — no network, no patching of
     individual call sites, and the real ``PalinodeAPI`` body-shaping /
     error-translation code path is exercised end-to-end.
+
+    Post-#197: ``PalinodeAPI`` now accepts an injected ``httpx.Client`` so
+    the fixture constructs a fresh ``PalinodeAPI(client=...)`` to build the
+    test transport, then sets it on the existing singleton so CLI commands
+    that hold a direct reference to the singleton object pick it up.  On
+    teardown a new default client is constructed via ``PalinodeAPI()`` rather
+    than snapshotting and restoring the old one.
     """
-    from palinode.cli._api import api_client as cli_api_client
+    from palinode.cli._api import PalinodeAPI, api_client as cli_api_client
     from palinode.core.defaults import SAVE_SOURCE_HEADER
 
     def _handler(request: httpx.Request) -> httpx.Response:
@@ -155,18 +162,25 @@ def cli_with_api_redirect(api_client):
             request=request,
         )
 
-    original_client = cli_api_client.client
-    cli_api_client.client = httpx.Client(
-        transport=httpx.MockTransport(_handler),
-        base_url="http://testserver",
-        timeout=30.0,
-        headers={SAVE_SOURCE_HEADER: "cli"},
+    # Use the new injection-capable constructor to build a fresh PalinodeAPI
+    # whose .client is the test transport. Assign it to the singleton's
+    # .client attribute so CLI commands that imported the singleton directly
+    # pick up the new transport without any module-level name swap.
+    test_api = PalinodeAPI(
+        client=httpx.Client(
+            transport=httpx.MockTransport(_handler),
+            base_url="http://testserver",
+            timeout=30.0,
+            headers={SAVE_SOURCE_HEADER: "cli"},
+        )
     )
+    cli_api_client.client = test_api.client
     try:
         yield
     finally:
         cli_api_client.client.close()
-        cli_api_client.client = original_client
+        # Restore a fresh default client — no snapshot needed.
+        cli_api_client.client = PalinodeAPI().client
 
 
 def _index_file(file_path: str) -> None:

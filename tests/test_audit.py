@@ -182,3 +182,79 @@ class TestAuditConfig:
         cfg = AuditConfig(enabled=False, log_path="custom/audit.jsonl")
         assert cfg.enabled is False
         assert cfg.log_path == "custom/audit.jsonl"
+
+
+class TestResolvedAuditLogPath:
+    """The resolved config (after load_config) must have an absolute audit path.
+
+    Verifies the fix for #254: a fresh install should not trigger the
+    audit_log_writable doctor warning about relative paths.
+    """
+
+    def test_resolved_default_is_absolute(self, tmp_path, monkeypatch):
+        """When audit.log_path is at the default, load_config resolves it to
+        an absolute path under memory_dir."""
+        import os
+        from palinode.core.config import load_config
+
+        memory_dir = str(tmp_path / "palinode")
+        os.makedirs(memory_dir)
+        monkeypatch.setenv("PALINODE_DIR", memory_dir)
+
+        cfg = load_config()
+
+        assert os.path.isabs(cfg.audit.log_path), (
+            f"audit.log_path should be absolute after load_config; got: {cfg.audit.log_path!r}"
+        )
+        assert cfg.audit.log_path.startswith(memory_dir), (
+            f"audit.log_path should be under memory_dir ({memory_dir}); "
+            f"got: {cfg.audit.log_path!r}"
+        )
+
+    def test_explicit_absolute_path_preserved(self, tmp_path, monkeypatch):
+        """An explicit absolute audit.log_path in user config is unchanged."""
+        import os
+        import yaml
+        from palinode.core.config import load_config
+
+        memory_dir = str(tmp_path / "palinode")
+        os.makedirs(memory_dir)
+
+        abs_audit = str(tmp_path / "custom-audit" / "calls.jsonl")
+        cfg_file = os.path.join(memory_dir, "palinode.config.yaml")
+        with open(cfg_file, "w") as f:
+            yaml.dump({"audit": {"log_path": abs_audit}}, f)
+
+        monkeypatch.setenv("PALINODE_DIR", memory_dir)
+
+        cfg = load_config()
+
+        assert cfg.audit.log_path == abs_audit, (
+            f"Explicit absolute audit.log_path should be preserved; "
+            f"got: {cfg.audit.log_path!r}"
+        )
+
+    def test_explicit_relative_path_preserved(self, tmp_path, monkeypatch):
+        """An explicit relative audit.log_path set by the user is left alone
+        (so the doctor still warns — user made a choice)."""
+        import os
+        import yaml
+        from palinode.core.config import load_config
+
+        memory_dir = str(tmp_path / "palinode")
+        os.makedirs(memory_dir)
+
+        relative_path = "my-custom/.audit/calls.jsonl"
+        cfg_file = os.path.join(memory_dir, "palinode.config.yaml")
+        with open(cfg_file, "w") as f:
+            yaml.dump({"audit": {"log_path": relative_path}}, f)
+
+        monkeypatch.setenv("PALINODE_DIR", memory_dir)
+
+        cfg = load_config()
+
+        # Non-default relative path should NOT be auto-resolved — doctor warns
+        assert cfg.audit.log_path == relative_path, (
+            f"User-set relative audit.log_path should be preserved; "
+            f"got: {cfg.audit.log_path!r}"
+        )

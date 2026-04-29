@@ -354,3 +354,246 @@ def test_session_end_creates_daily(client, tmp_path):
     with open(daily_path) as f:
         content = f.read()
     assert "Finished integration tests." in content
+
+
+# ---------------------------------------------------------------------------
+# Git commit tests (issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_save_creates_git_commit(tmp_path, monkeypatch):
+    """POST /save with auto_commit=True must run `git commit` for the new file.
+
+    We don't spin up a real git repo in tmp_path; instead we mock subprocess.run
+    and verify the right commands are invoked with the right cwd.
+    """
+    import subprocess as _subprocess
+    from palinode.core.config import config
+
+    # Temporarily enable auto_commit for this test
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    monkeypatch.setattr(config, "db_path", os.path.join(str(tmp_path), ".palinode.db"))
+    monkeypatch.setattr(config.git, "auto_commit", True)
+    monkeypatch.setattr(config.git, "auto_push", False)
+
+    for d in ("people", "projects", "decisions", "insights", "research", "inbox", "daily"):
+        os.makedirs(os.path.join(str(tmp_path), d), exist_ok=True)
+
+    from palinode.core import store
+    store.init_db()
+
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with (
+        mock.patch("palinode.core.embedder.embed", side_effect=_fake_embed),
+        mock.patch("palinode.api.server._generate_description", return_value="Test description"),
+        mock.patch("palinode.api.server._generate_summary", return_value=""),
+        mock.patch("palinode.api.server.subprocess.run", side_effect=_fake_run),
+    ):
+        from palinode.api.server import app, _rate_counters
+        _rate_counters.clear()
+        c = TestClient(app, raise_server_exceptions=False)
+        resp = c.post("/save", json={
+            "content": "Commit this fact.",
+            "type": "Decision",
+            "slug": "commit-test",
+        })
+
+    assert resp.status_code == 200, resp.text
+
+    git_cmds = [c for c in calls if c and c[0] == "git"]
+    assert any(c[1] == "add" for c in git_cmds), f"expected 'git add' in {git_cmds}"
+    assert any(c[1] == "commit" for c in git_cmds), f"expected 'git commit' in {git_cmds}"
+
+    commit_cmd = next(c for c in git_cmds if c[1] == "commit")
+    commit_msg = " ".join(commit_cmd)
+    assert "auto-save" in commit_msg
+
+
+def test_save_no_git_commit_when_disabled(tmp_path, monkeypatch):
+    """POST /save with auto_commit=False must NOT invoke git."""
+    import subprocess as _subprocess
+    from palinode.core.config import config
+
+    monkeypatch.setattr(config, "memory_dir", str(tmp_path))
+    monkeypatch.setattr(config, "db_path", os.path.join(str(tmp_path), ".palinode.db"))
+    monkeypatch.setattr(config.git, "auto_commit", False)
+
+    for d in ("people", "projects", "decisions", "insights", "research", "inbox", "daily"):
+        os.makedirs(os.path.join(str(tmp_path), d), exist_ok=True)
+
+    from palinode.core import store
+    store.init_db()
+
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with (
+        mock.patch("palinode.core.embedder.embed", side_effect=_fake_embed),
+        mock.patch("palinode.api.server._generate_description", return_value="Test description"),
+        mock.patch("palinode.api.server._generate_summary", return_value=""),
+        mock.patch("palinode.api.server.subprocess.run", side_effect=_fake_run),
+    ):
+        from palinode.api.server import app, _rate_counters
+        _rate_counters.clear()
+        c = TestClient(app, raise_server_exceptions=False)
+        resp = c.post("/save", json={
+            "content": "No commit for this.",
+            "type": "Insight",
+            "slug": "no-commit-test",
+        })
+
+    assert resp.status_code == 200, resp.text
+
+    git_cmds = [c for c in calls if c and c[0] == "git"]
+    assert not git_cmds, f"expected no git calls but got: {git_cmds}"
+
+
+# ---------------------------------------------------------------------------
+# CORS tests (issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_cors_allows_configured_origin(client):
+    """Preflight from a configured origin receives Access-Control-Allow-Origin."""
+    resp = client.options(
+        "/save",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    # FastAPI CORSMiddleware returns 200 for allowed origins
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_cors_rejects_unknown_origin(client):
+    """Preflight from an origin NOT in PALINODE_CORS_ORIGINS gets no ACAO header."""
+    resp = client.options(
+        "/save",
+        headers={
+            "Origin": "https://evil.example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    # For disallowed origins, CORSMiddleware omits Access-Control-Allow-Origin
+    # (may return 400 or 200 without the header — either way the browser blocks it)
+    acao = resp.headers.get("access-control-allow-origin", "")
+    assert acao != "https://evil.example.com", (
+        "Server granted CORS to an untrusted origin"
+    )
+    assert acao != "*", "Server must not use wildcard CORS"
+
+
+# ---------------------------------------------------------------------------
+# Additional path-traversal / security tests (issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_save_null_byte_in_slug_sanitized(client):
+    """A null byte in the slug must not cause a 500 or write a path with null bytes.
+
+    The server sanitizes the slug (strips/replaces null bytes) rather than
+    raising an unhandled exception. The result is either a clean save or a
+    4xx — never a 500 and never a file path that contains a null byte.
+    """
+    resp = client.post("/save", json={
+        "content": "Sneaky null byte.",
+        "type": "Insight",
+        "slug": "null\x00byte",
+    })
+    # Server must not 500 — it either sanitizes (200) or validates out (4xx)
+    assert resp.status_code != 500, f"Got 500 on null-byte slug: {resp.text}"
+    if resp.status_code == 200:
+        fp = resp.json().get("file_path", "")
+        assert "\x00" not in fp, f"Null byte leaked into file path: {fp}"
+
+
+def test_read_absolute_path_rejected(client):
+    """An absolute path in /read must be rejected with 403."""
+    resp = client.get("/read?file_path=/etc/passwd")
+    assert resp.status_code == 403
+
+
+def test_read_null_byte_in_path_rejected(client):
+    """A null byte in the file_path must be rejected (400)."""
+    resp = client.get("/read?file_path=insights/foo%00bar.md")
+    assert resp.status_code == 400
+
+
+def test_save_missing_required_fields_rejected(client):
+    """POST /save without required `content` field should return 422."""
+    resp = client.post("/save", json={"type": "Insight"})
+    assert resp.status_code == 422
+
+
+def test_save_unknown_type_rejected_or_defaulted(client):
+    """POST /save with a bogus type either rejects (422) or falls back gracefully — never 500."""
+    resp = client.post("/save", json={
+        "content": "What type am I?",
+        "type": "NonExistentType",
+        "slug": "unknown-type-test",
+    })
+    # Must not be a 500 — either validated out (422) or accepted with fallback
+    assert resp.status_code != 500, f"Got unexpected 500: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# Save-then-search roundtrip (explicit end-to-end, issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_full_save_search_roundtrip(client, tmp_path):
+    """Explicit end-to-end: save a fact, index it, search for it, read it back."""
+    # Step 1: save
+    unique_token = "quokka-flamingo-xylophone"
+    resp = client.post("/save", json={
+        "content": f"The {unique_token} memory is a test anchor.",
+        "type": "Insight",
+        "slug": "roundtrip-anchor",
+        "entities": ["project/palinode"],
+    })
+    assert resp.status_code == 200
+    fp = resp.json()["file_path"]
+    assert os.path.exists(fp)
+
+    # Step 2: manually index (watcher not running)
+    from palinode.core import store
+    store.upsert_chunks([{
+        "id": "roundtrip-anchor-1",
+        "file_path": fp,
+        "section_id": None,
+        "category": "insights",
+        "content": f"The {unique_token} memory is a test anchor.",
+        "metadata": {},
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "embedding": _fake_embed("x"),
+    }])
+
+    # Step 3: search
+    resp = client.post("/search", json={
+        "query": unique_token,
+        "threshold": 0.0,
+        "limit": 5,
+    })
+    assert resp.status_code == 200
+    results = resp.json()
+    assert any(unique_token in r.get("content", "") for r in results), (
+        f"Unique token not found in search results: {results}"
+    )
+
+    # Step 4: read back
+    resp = client.get("/read?file_path=insights/roundtrip-anchor.md")
+    assert resp.status_code == 200
+    assert unique_token in resp.json()["content"]

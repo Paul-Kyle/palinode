@@ -276,6 +276,68 @@ class TestMcpConfigHomes:
         assert str(a) in (result.remediation or "")
         assert str(b) in (result.remediation or "")
 
+    def test_ssh_stdio_no_entries_returns_info(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When SSH_CONNECTION is set and there are no palinode entries,
+        the check should return passed=True with an informational message
+        explaining the SSH deployment context. Fixes #255."""
+        # Point candidate paths to an empty config file
+        f = tmp_path / "claude.json"
+        f.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        self._stub_paths(monkeypatch, [("Test config", f)])
+
+        # Simulate an SSH remote session
+        monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 54321 192.168.1.100 22")
+
+        ctx = _ctx(tmp_path)
+        result = run_one(ctx, "mcp_config_homes")
+
+        assert result.passed is True
+        assert result.severity == "info"
+        assert "SSH" in result.message or "ssh" in result.message.lower()
+        assert "10.0.0.1" in result.message
+        assert result.remediation is None
+
+    def test_ssh_stdio_with_entries_runs_normal_logic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When SSH_CONNECTION is set but entries ARE found, existing logic
+        runs unchanged (single-entry pass)."""
+        f = tmp_path / "claude.json"
+        f.write_text(json.dumps({
+            "mcpServers": {"palinode": {"command": "palinode-mcp"}},
+        }), encoding="utf-8")
+        self._stub_paths(monkeypatch, [("Remote config", f)])
+
+        monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 54321 192.168.1.100 22")
+
+        ctx = _ctx(tmp_path)
+        result = run_one(ctx, "mcp_config_homes")
+
+        # Normal single-entry result — SSH_CONNECTION does not override this path
+        assert result.passed is True
+        assert result.severity == "info"
+        assert "SSH" not in result.message  # normal message path
+
+    def test_no_ssh_no_entries_suggests_init(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without SSH_CONNECTION, the original 'run palinode init' message fires."""
+        f = tmp_path / "claude.json"
+        f.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        self._stub_paths(monkeypatch, [("Test config", f)])
+
+        # Ensure SSH_CONNECTION is absent
+        monkeypatch.delenv("SSH_CONNECTION", raising=False)
+
+        ctx = _ctx(tmp_path)
+        result = run_one(ctx, "mcp_config_homes")
+
+        assert result.passed is True
+        assert result.severity == "info"
+        assert "palinode init" in result.message
+
 
 # ===========================================================================
 # process_env_drift

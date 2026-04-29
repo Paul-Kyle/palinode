@@ -61,3 +61,7 @@ nohup.out
 
 # Launch-posts working draft — local-only, not for git
 artifacts/launch-posts.md
+
+# Test-rig deploy-key material (.claude/plans/test-rigs/) — never commit secrets
+.claude/plans/test-rigs/group_vars/all.vault.yml
+.claude/plans/palinode-test-env/group_vars/all.vault.yml

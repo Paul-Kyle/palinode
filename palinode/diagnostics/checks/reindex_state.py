@@ -22,6 +22,7 @@ from palinode.diagnostics.registry import register
 from palinode.diagnostics.types import CheckResult, DoctorContext
 
 # Threshold after which a "running" reindex is considered stuck.
+# Override in tests by monkeypatching this constant or the calling module.
 _STUCK_MINUTES = 30
 
 

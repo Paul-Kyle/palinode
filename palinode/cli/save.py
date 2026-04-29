@@ -47,6 +47,17 @@ from palinode.cli._format import console, print_result, get_default_format, Outp
         "Parsed before sending — matches the API's `metadata` field."
     ),
 )
+@click.option(
+    "--external-ref",
+    "external_ref_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help=(
+        "SDLC object reference in KEY=VALUE form. Repeatable. "
+        "e.g. --external-ref gitlab_mr=myorg/myrepo!42 "
+        "--external-ref linear_issue=PAL-1"
+    ),
+)
 @click.option("--source", help="Source surface (e.g., claude-code, cursor, api)")
 @click.option(
     "--sync/--no-sync",
@@ -68,6 +79,7 @@ def save(
     core,
     confidence,
     metadata,
+    external_ref_pairs,
     source,
     sync,
     fmt,
@@ -116,6 +128,20 @@ def save(
     else:
         metadata = None
 
+    # Parse --external-ref KEY=VALUE pairs into a dict.
+    external_refs: dict | None = None
+    if external_ref_pairs:
+        external_refs = {}
+        for pair in external_ref_pairs:
+            if "=" not in pair:
+                console.print(
+                    f"[red]Error: --external-ref must be KEY=VALUE, got: {pair!r}[/red]"
+                )
+                click.Abort()
+                return
+            key, _, value = pair.partition("=")
+            external_refs[key.strip()] = value
+
     try:
         # ADR-010 / #167: do not default source here.  The HTTP client sets
         # X-Palinode-Source: cli on every request; only forward `source` in
@@ -132,6 +158,7 @@ def save(
             core=core,
             confidence=confidence,
             metadata=metadata,
+            external_refs=external_refs,
         )
 
         output_fmt = OutputFormat(fmt) if fmt else get_default_format()

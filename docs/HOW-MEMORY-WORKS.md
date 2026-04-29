@@ -331,6 +331,33 @@ The entity index is a reverse lookup: given an entity, find all files that menti
 
 ---
 
+## 7a. External References
+
+Memories can carry optional references to SDLC objects — GitLab MRs, issues, pipelines, GitHub PRs, Linear issues, Jira tickets, or any free-form key/value pair your workflow uses. These are stored in the `external_refs` frontmatter dict:
+
+```yaml
+---
+id: decision-auth-approach
+external_refs:
+  gitlab_mr: "myorg/myrepo!42"
+  gitlab_issue: "myorg/myrepo#17"
+  github_pr: "phasespace-labs/palinode#99"
+  linear_issue: "PAL-42"
+  jira_issue: "PROJ-100"
+---
+```
+
+**There are no live queries** — Palinode does not fetch or validate these references. They are pass-through metadata that travels with the memory and appears in search results. Recognised keys (`gitlab_mr`, `gitlab_issue`, `gitlab_pipeline`, `github_pr`, `linear_issue`, `jira_issue`) render with short pretty labels in `palinode_search` output; unrecognised keys pass through as-is.
+
+**At save time:**
+- API: `POST /save` with `external_refs: {"gitlab_mr": "palinode!42"}`
+- CLI: `palinode save "..." --external-ref gitlab_mr=palinode!42 --external-ref linear_issue=PAL-1`
+- MCP: `palinode_save` with `external_refs={"gitlab_mr": "palinode!42"}`
+
+Nested values (dicts or lists) are soft-warned and dropped — every value must be a plain string.
+
+---
+
 ## 7b. The Wiki Maintenance Contract
 
 Each memory has two cross-reference channels: the typed `entities:` list in YAML frontmatter, and `[[wikilinks]]` in the note body. Both are first-class. The frontmatter is authoritative for the index and for entity-graph queries; the body links are what makes a note useful when read directly or rendered in Obsidian.
@@ -338,6 +365,43 @@ Each memory has two cross-reference channels: the typed `entities:` list in YAML
 The LLM is the maintainer of consistency between the two surfaces. PROGRAM.md's "Wiki Maintenance" section is the canonical contract: when creating or updating a memory, decide what entities are referenced, add them in canonical `kind/slug` form to `entities:`, and either write the link inline in the body where it's load-bearing or let `palinode_save` materialise an idempotent `## See also` footer (delimited by `<!-- palinode-auto-footer -->`) for whatever doesn't have an inline anchor.
 
 This contract is what makes Palinode's storage interoperable with Obsidian's graph view, with `palinode_orphan_repair`, with `palinode_dedup_suggest`, and with the entity-graph spreading-activation phase of recall above. Lint includes a `wiki_drift` check that warns when the two surfaces diverge. See [OBSIDIAN.md](OBSIDIAN.md#the-wiki-contract) for the user-facing summary.
+
+---
+
+## 7c. IETF KU Frontmatter Fields
+
+Palinode memory files optionally carry three fields from the [IETF Knowledge Unit draft](https://datatracker.ietf.org/doc/draft-farley-acta-knowledge-units/) (`draft-farley-acta-knowledge-units`). These fields are purely additive — existing files without them continue to work unchanged.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ku_version` | string (`"1.0"`) | Marks the file as KU-aligned at this draft revision. |
+| `confidence` | float (0.0–1.0) | Author's or system's confidence in the memory content. Surfaced as a top-level key in search results. |
+| `lifecycle` | `"active"` \| `"archived"` \| `"deprecated"` | Mirrors Palinode's existing `status` field in KU vocabulary. If `lifecycle` is absent, the parser falls back to `status` when the value maps; otherwise defaults to `"active"`. |
+
+**Auto-population:** Set `ku_compat: enabled: true` in `palinode.config.yaml` to automatically write `ku_version` and `lifecycle` on every save.
+
+## 7d. Dependency Frontmatter (ProjectSnapshot)
+
+ProjectSnapshot memories can carry optional dependency fields that model milestone and task sequencing:
+
+```yaml
+---
+type: ProjectSnapshot
+id: snapshot-m1-doctor
+slug: milestone/M1.1-init
+depends_on:
+  - milestone/M1.0-bootstrap
+blocks:
+  - milestone/M2-agent-intelligence
+parallel_with:
+  - milestone/M4-import
+status: in_progress  # in_progress | done | blocked
+---
+```
+
+**`palinode_depends` tool:** given a slug, returns the dependency neighbourhood plus `unblocked: bool` (true when every `depends_on` is `status: done`) and `orphans` (referenced slugs that have no matching memory file).
+
+**`--unblocked` mode:** `palinode depends --unblocked` (CLI) or `GET /depends/_unblocked` (API) returns all slugs whose dependencies are all done — answering "what can I work on right now?"
 
 ---
 

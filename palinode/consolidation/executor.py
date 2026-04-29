@@ -37,32 +37,69 @@ def _normalize_fact_text(text: str) -> str:
     return normalized
 
 
-def apply_operations(file_path: str, operations: list[dict]) -> dict:
+def _extract_fact_date(content: str, fact_id: str) -> str | None:
+    """Extract the date prefix from a fact's text, if present.
+
+    Looks for a ``[YYYY-MM-DD]`` date tag at the start of the fact text.
+    Returns the ``YYYY-MM-DD`` string, or ``None`` if no date is found.
+    """
+    pattern = re.compile(
+        r'^[\s]*[-*]\s+\[(\d{4}-\d{2}-\d{2})\].*?<!-- fact:' + re.escape(fact_id) + r' -->',
+        re.MULTILINE,
+    )
+    m = pattern.search(content)
+    return m.group(1) if m else None
+
+
+def _nightly_merge_allowed(content: str, ids: list[str]) -> bool:
+    """Return True iff a nightly MERGE is permitted for the given fact IDs.
+
+    Nightly policy: all facts in the merge must share the same calendar date
+    (``[YYYY-MM-DD]`` prefix in their text).  Cross-date merges are deferred to
+    the weekly pass.  Facts without a recognisable date prefix are rejected to
+    avoid silent data loss.
+    """
+    if not ids:
+        return False
+    dates = [_extract_fact_date(content, fid) for fid in ids]
+    # Any fact without a parseable date → reject
+    if any(d is None for d in dates):
+        return False
+    # All dates must be the same calendar day
+    return len(set(dates)) == 1
+
+
+def apply_operations(file_path: str, operations: list[dict], *, nightly_policy: bool = False) -> dict:
     """Apply a list of operations to a memory file.
-    
+
     Args:
         file_path: Path to the target markdown file.
         operations: List of operation dicts with 'op' key.
-        
+        nightly_policy: When True, MERGE ops are subject to the same-day guard:
+            only facts sharing the same ``[YYYY-MM-DD]`` date prefix may be
+            merged.  Cross-date or undated MERGE proposals are rejected with a
+            log warning and counted as ``merge_rejected``.
+
     Returns:
-        Stats dict: {kept, updated, merged, superseded, archived}.
+        Stats dict: {kept, updated, merged, superseded, archived, retracted,
+                     merge_rejected}.
     """
     with open(file_path) as f:
         content = f.read()
-    
-    stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0}
-    
+
+    stats = {"kept": 0, "updated": 0, "merged": 0, "superseded": 0, "archived": 0, "retracted": 0, "merge_rejected": 0}
+
     for op in operations:
         if not isinstance(op, dict):
             logger.warning(f"Malformed operation (expected dict, got {type(op).__name__}): {op}")
             continue
-        
+
         op_type = op.get("op", "KEEP").upper()
-        
+
         if op_type == "KEEP":
             stats["kept"] += 1
             continue
-        
+
         elif op_type == "UPDATE":
             fact_id = op.get("id")
             new_text = op.get("new_text", "")
@@ -76,6 +113,14 @@ def apply_operations(file_path: str, operations: list[dict]) -> dict:
             ids = op.get("ids", [])
             new_text = op.get("new_text", "")
             if ids and new_text:
+                if nightly_policy and not _nightly_merge_allowed(content, ids):
+                    id_list = ", ".join(ids)
+                    logger.warning(
+                        f"MERGE rejected by nightly policy: cross-date or undated facts "
+                        f"({id_list}) in {file_path}"
+                    )
+                    stats["merge_rejected"] += 1
+                    continue
                 merged_content = _merge_facts(content, ids, new_text)
                 if merged_content != content:
                     content = merged_content

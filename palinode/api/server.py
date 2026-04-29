@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from palinode.core import store, embedder, git_tools
 from palinode.core.config import config
+from palinode.core.retrieval_log import RetrievalLogger
 from palinode.core.defaults import (
     SAVE_SOURCE_API_DEFAULT,
     SAVE_SOURCE_HEADER,
@@ -42,6 +43,13 @@ from palinode.core.defaults import (
 
 logger = logging.getLogger("palinode.api")
 logger.setLevel(getattr(logging, config.services.api.log_level.upper(), logging.INFO))
+
+# Issue #256: retrieval-event instrumentation (ADR-007 prerequisite).
+# Lazy-initialised once at import time; honors PALINODE_INSTRUMENTATION_DISABLED env var.
+_retrieval_logger = RetrievalLogger(
+    config.memory_dir,
+    enabled=config.instrumentation.capture_retrievals,
+)
 
 
 class JsonlFormatter(logging.Formatter):
@@ -182,12 +190,23 @@ def _check_rate_limit(client_ip: str, category: str, limit: int) -> bool:
     entry["count"] += 1
     return entry["count"] <= limit
 
-# Startup warning for unsafe binding
+# Startup warning for unsafe binding.
+# Set PALINODE_API_BIND_INTENT=public to suppress the warning for intentional
+# network-exposed deployments (e.g., Tailscale). Without the env var, the
+# warning fires on every 0.0.0.0 start. Fixes #253.
 _api_host = os.environ.get("PALINODE_API_HOST", config.services.api.host)
-if _api_host == "0.0.0.0":
+_bind_intent_public = os.environ.get("PALINODE_API_BIND_INTENT", "").lower() == "public"
+if _api_host == "0.0.0.0" and not _bind_intent_public:
     logger.warning(
         "API binding to 0.0.0.0 — accessible from any network. "
-        "No authentication is configured. Set PALINODE_API_HOST=127.0.0.1 for local-only access."
+        "No authentication is configured. Set PALINODE_API_HOST=127.0.0.1 for local-only access. "
+        "Set PALINODE_API_BIND_INTENT=public to suppress this warning for intentional "
+        "network-exposed deployments (e.g., Tailscale)."
+    )
+elif _api_host == "0.0.0.0" and _bind_intent_public:
+    logger.debug(
+        "API binding to 0.0.0.0 — PALINODE_API_BIND_INTENT=public set; "
+        "binding warning suppressed."
     )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -527,6 +546,35 @@ class OrphanRepairRequest(BaseModel):
     top_k: int | None = 10
 
 
+class ClusterNeighborsRequest(BaseModel):
+    """Find semantically related files not already linked to/from file_path (#235).
+
+    Used by the LLM during wiki-maintenance passes to surface implicit
+    relationships that no ``[[wikilink]]`` yet captures.  Default threshold
+    0.70 sits between the dedup default (0.80) and the orphan-repair default
+    (0.65) — looser than "potential duplicate", tighter than "anything vaguely
+    related".
+    """
+
+    file_path: str
+    min_similarity: float | None = 0.70
+    top_k: int | None = 10
+
+
+class TopicCoverageRequest(BaseModel):
+    """Check whether any wiki page already covers a topic phrase (#235).
+
+    The LLM calls this BEFORE ingesting new content to ask "is this
+    redundant?".  Different framing from ``dedup_suggest``: the input is a
+    short topic phrase (not full draft content), and the return is a simple
+    ``{covered, best_match, similarity}`` dict rather than a ranked list.
+    Default threshold 0.78 — between dedup (0.80) and cluster (0.70).
+    """
+
+    query: str
+    min_similarity: float | None = 0.78
+
+
 class SaveRequest(BaseModel):
     content: str
     type: str
@@ -544,6 +592,12 @@ class SaveRequest(BaseModel):
     #: mismatch, both values land — same as supplying ``entities=["project/a",
     #: "project/b"]`` directly.
     project: str | None = None
+    #: Optional dict of SDLC object references (GitLab MR/issue/pipeline,
+    #: GitHub PR, Linear, Jira, etc.).  Free-form key/value pairs — recognised
+    #: keys get pretty rendering; others pass through unchanged (#115).
+    #: Typed as Any-value so Pydantic doesn't reject nested values before
+    #: our parser helper can soft-warn and drop them.
+    external_refs: dict[str, Any] | None = None
 
 
 @app.get("/list")
@@ -635,7 +689,14 @@ def read_api(file_path: str, meta: bool = False) -> dict[str, Any]:
         if meta:
             metadata, _ = parser.parse_markdown(content)
             result["frontmatter"] = metadata
-            
+
+        # Issue #256: emit retrieval event (explicit — direct /read call).
+        _retrieval_logger.record_file_read(
+            file_path,
+            source="palinode_read",
+            mode="explicit",
+        )
+
         return result
     except Exception as e:
         raise _safe_500(e, "File read failed")
@@ -746,7 +807,27 @@ def search_api(req: SearchRequest, request: Request = None) -> list[dict[str, An
 
         # Apply types filter post-fetch (#141), then trim to caller's limit.
         results = _filter_types(results, req.types)
-        return results[:limit]
+        final = results[:limit]
+
+        # Issue #256: emit retrieval events (explicit — came in via /search API).
+        # Source attribution: the X-Palinode-Source header tells us the surface
+        # (mcp → "palinode_search", cli → "cli_search", api → "api_search").
+        _search_source = "api_search"
+        if request is not None:
+            from palinode.core.defaults import SAVE_SOURCE_HEADER
+            hdr = request.headers.get(SAVE_SOURCE_HEADER, "")
+            if hdr == "mcp":
+                _search_source = "palinode_search"
+            elif hdr == "cli":
+                _search_source = "cli_search"
+        _retrieval_logger.record_search_results(
+            final,
+            query=req.query,
+            source=_search_source,
+            mode="explicit",
+            session_id=None,
+        )
+        return final
     except Exception as e:
         raise _safe_500(e, "Search failed")
 
@@ -1029,6 +1110,150 @@ def orphan_repair_api(req: OrphanRepairRequest) -> list[dict[str, Any]]:
         raise _safe_500(e, "Orphan repair failed")
 
 
+@app.post("/cluster-neighbors")
+def cluster_neighbors_api(req: ClusterNeighborsRequest) -> list[dict[str, Any]]:
+    """Return top-K semantically related files not already linked to/from file_path.
+
+    Extracts all ``[[wikilinks]]`` in the source file and in every other file
+    that links TO it, then excludes those already-linked files from the
+    candidate slate.  The remaining candidates are re-ranked with the
+    preprocessing pipeline (strip frontmatter, auto-footer, wikilink
+    decoration) and filtered by ``min_similarity``.
+
+    Designed for the Obsidian wiki-maintenance LLM: surfaces implicit
+    relationships that no wikilink yet captures so the LLM can propose
+    new cross-links.
+    """
+    try:
+        from palinode.core.embedding_preprocess import preprocess_for_similarity
+
+        min_similarity = req.min_similarity if req.min_similarity is not None else 0.70
+        top_k = req.top_k or 10
+
+        # Read the source file body.
+        body = _read_memory_body(req.file_path)
+        if body is None:
+            return []
+
+        preprocessed = preprocess_for_similarity(body)
+        if not preprocessed:
+            return []
+
+        # Embed the source file to find semantic neighbours.
+        query_emb = embedder.embed(preprocessed)
+        if not query_emb:
+            return []
+
+        # Collect all files already explicitly linked TO or FROM file_path.
+        # "To" = wikilinks inside file_path's body.
+        # "From" = files that contain a wikilink to file_path's basename slug.
+        linked_slugs: set[str] = set()
+        # Slug of the source file (filename without extension).
+        source_slug = os.path.splitext(os.path.basename(req.file_path))[0]
+
+        # Extract outgoing links from the source file (raw body, not preprocessed).
+        outgoing = set(re.findall(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]", body))
+        for link in outgoing:
+            linked_slugs.add(link.split("/")[-1])
+
+        # Also exclude the source file itself.
+        linked_slugs.add(source_slug)
+
+        # Scan all indexed files for incoming links to source_slug.
+        db = store.get_db()
+        try:
+            all_fps = db.execute(
+                "SELECT DISTINCT file_path FROM chunks"
+            ).fetchall()
+        finally:
+            db.close()
+
+        incoming_file_paths: set[str] = set()
+        link_re = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]")
+        for (fp,) in all_fps:
+            incoming_file_paths.add(fp)
+            fp_body = _read_memory_body(fp)
+            if fp_body and source_slug in fp_body:
+                for m in link_re.finditer(fp_body):
+                    if m.group(1).split("/")[-1] == source_slug:
+                        linked_slugs.add(os.path.splitext(os.path.basename(fp))[0])
+                        break
+
+        # Fetch candidate slate from the vector index.
+        candidates = _embedding_candidates(query_emb, top_k=top_k, over_fetch=6)
+
+        # Exclude already-linked files.
+        filtered_candidates = [
+            c for c in candidates
+            if os.path.splitext(os.path.basename(c.get("file_path", "")))[0] not in linked_slugs
+            and c.get("file_path", "") != req.file_path
+        ]
+
+        ranked = _rerank_with_preprocessing(
+            query_preprocessed=preprocessed,
+            candidates=filtered_candidates,
+            min_similarity=min_similarity,
+            top_k=top_k,
+        )
+        # Rename "similarity" → also expose as "score" per issue spec shape.
+        for r in ranked:
+            r["score"] = r["similarity"]
+        return ranked
+    except Exception as e:
+        raise _safe_500(e, "Cluster neighbors failed")
+
+
+@app.post("/topic-coverage")
+def topic_coverage_api(req: TopicCoverageRequest) -> dict[str, Any]:
+    """Check whether any wiki page already covers a topic phrase.
+
+    Returns ``{covered: bool, best_match: str | None, similarity: float}``
+    where ``best_match`` is a relative file_path.  The LLM calls this
+    before ingesting new content to avoid creating a page for a topic that
+    is already well-covered.
+
+    Uses the same preprocessing pipeline as the other embedding tools so
+    that the query is compared against de-noised file bodies.
+    """
+    try:
+        from palinode.core.embedding_preprocess import preprocess_for_similarity
+
+        min_similarity = req.min_similarity if req.min_similarity is not None else 0.78
+
+        # Treat the query phrase like a short document through the pipeline.
+        # slug-style phrases ("machine-learning-deployment") become natural
+        # language tokens ("machine learning deployment") for better recall.
+        preprocessed_query = preprocess_for_similarity(req.query)
+        preprocessed_query = preprocessed_query.replace("-", " ").replace("_", " ").strip()
+        if not preprocessed_query:
+            return {"covered": False, "best_match": None, "similarity": 0.0}
+
+        query_emb = embedder.embed(preprocessed_query)
+        if not query_emb:
+            return {"covered": False, "best_match": None, "similarity": 0.0}
+
+        candidates = _embedding_candidates(query_emb, top_k=5, over_fetch=4)
+        if not candidates:
+            return {"covered": False, "best_match": None, "similarity": 0.0}
+
+        ranked = _rerank_with_preprocessing(
+            query_preprocessed=preprocessed_query,
+            candidates=candidates,
+            min_similarity=min_similarity,
+            top_k=1,
+        )
+        if ranked:
+            best = ranked[0]
+            return {
+                "covered": True,
+                "best_match": best["file_path"],
+                "similarity": best["similarity"],
+            }
+        return {"covered": False, "best_match": None, "similarity": 0.0}
+    except Exception as e:
+        raise _safe_500(e, "Topic coverage failed")
+
+
 @app.post("/save")
 def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> dict[str, Any]:
     """Persists a new memory instance chunk locally and initiates git backup sequences.
@@ -1085,6 +1310,9 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
             raw_entities.append(project_ref)
     normalized_entities = _normalize_entities(raw_entities, category)
 
+    # Capture a single UTC timestamp for both created_at and last_updated so
+    # that they are identical on first write (#177: file must not be born stale).
+    _now_iso = _utc_now().isoformat()
     frontmatter_dict = {
         "id": f"{category}-{slug}",
         "category": category,
@@ -1095,7 +1323,12 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
         # Previously used ``time.strftime("...%Z")`` which emitted local time
         # with a ``Z`` (UTC) marker — a mismatch that made `chunks.created_at`
         # unreliable as a recency signal.
-        "created_at": _utc_now().isoformat()
+        "created_at": _now_iso,
+        # #177: populate last_updated on initial write so the file isn't born
+        # stale.  The freshness checker treats a missing last_updated as stale;
+        # setting it equal to created_at on first save avoids that false positive.
+        # On re-saves the indexer re-reads frontmatter and this value is refreshed.
+        "last_updated": _now_iso,
     }
     if req.metadata:
         frontmatter_dict.update(req.metadata)
@@ -1103,6 +1336,21 @@ def save_api(req: SaveRequest, request: Request = None, sync: bool = False) -> d
         frontmatter_dict["core"] = req.core
     if req.confidence is not None:
         frontmatter_dict["confidence"] = req.confidence
+    # #106: IETF KU frontmatter alignment — auto-populate KU fields when
+    # ku_compat is enabled, or when the caller explicitly provides them.
+    if config.ku_compat.enabled:
+        if "ku_version" not in frontmatter_dict:
+            frontmatter_dict["ku_version"] = config.ku_compat.ku_version
+        if "lifecycle" not in frontmatter_dict:
+            raw_status = frontmatter_dict.get("status") or (req.metadata or {}).get("status", "active")
+            from palinode.core.parser import VALID_LIFECYCLES
+            frontmatter_dict["lifecycle"] = raw_status if raw_status in VALID_LIFECYCLES else "active"
+    # #115: external SDLC object references (free-form dict[str, str]).
+    if req.external_refs is not None:
+        from palinode.core.parser import parse_external_refs as _parse_ext_refs
+        validated = _parse_ext_refs({"external_refs": req.external_refs})
+        if validated is not None:
+            frontmatter_dict["external_refs"] = validated
     # ADR-010 / #166: explicit ``title`` overrides metadata-supplied title.
     if req.title:
         frontmatter_dict["title"] = req.title
@@ -1624,19 +1872,64 @@ def lint_api() -> dict[str, Any]:
 
 
 @app.get("/history/{file_path:path}")
-def history_api(file_path: str, limit: int = 20) -> dict[str, Any]:
+def history_api(
+    file_path: str,
+    limit: int = 20,
+    detail: str = "summary",
+) -> dict[str, Any]:
     """Get the change history for a memory file.
 
     Uses --follow to track renames and includes diff stats per commit.
+
+    ``detail="full"`` additionally includes the unified diff body per commit
+    (commit-level evolution view, formerly the /timeline endpoint).
     """
-    commits = git_tools.history(file_path, limit)
+    if detail not in ("summary", "full"):
+        raise HTTPException(status_code=422, detail="detail must be 'summary' or 'full'")
+    commits = git_tools.history(file_path, limit, detail=detail)
     if not commits:
         # Distinguish "file not found" from "no history"
         import os as _os
         full_path = _os.path.join(config.memory_dir, file_path)
         if not _os.path.exists(full_path):
             raise HTTPException(status_code=404, detail="File not found")
+
+    # Issue #256: history access is an explicit retrieval.
+    _retrieval_logger.record_file_read(
+        file_path,
+        source="palinode_history",
+        mode="explicit",
+    )
     return {"file": file_path, "history": commits}
+
+
+@app.get("/timeline/{file_path:path}")
+def timeline_api(
+    request: Request,
+    file_path: str,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Deprecated: use GET /history/{file_path}?detail=full instead.
+
+    Kept for one release cycle for backward compatibility.  Returns the same
+    response as /history?detail=full with a ``Deprecation`` response header.
+    """
+    from fastapi.responses import JSONResponse as _JSONResponse
+    import logging as _logging
+    _logging.getLogger("palinode.api").warning(
+        "GET /timeline is deprecated — use GET /history/%s?detail=full", file_path
+    )
+    commits = git_tools.history(file_path, limit, detail="full")
+    if not commits:
+        import os as _os
+        full_path = _os.path.join(config.memory_dir, file_path)
+        if not _os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail="File not found")
+    body = {"file": file_path, "history": commits}
+    return _JSONResponse(
+        content=body,
+        headers={"Deprecation": "true", "Link": f'</history/{file_path}?detail=full>; rel="successor-version"'},
+    )
 
 
 class ConsolidateRequest(BaseModel):
@@ -1689,6 +1982,12 @@ def diff_api(days: int = 7, paths: str | None = None) -> dict[str, Any]:
 @app.get("/blame/{file_path:path}")
 def blame_api(file_path: str, search: str | None = None) -> dict[str, Any]:
     """Show when each line of a memory file was last changed."""
+    # Issue #256: blame access is an explicit retrieval.
+    _retrieval_logger.record_file_read(
+        file_path,
+        source="palinode_blame",
+        mode="explicit",
+    )
     return {"blame": git_tools.blame(file_path, search)}
 
 
@@ -2145,6 +2444,44 @@ def migrate_openclaw_api(req: MigrateOpenClawRequest) -> dict:
     except Exception as exc:
         logger.error(f"OpenClaw migration failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/depends/_unblocked")
+def depends_unblocked_api() -> list[dict]:
+    """Return all slugs whose every depends_on dependency is status=done.
+
+    Each entry is ``{slug, status, file_path}``.  Items whose own status is
+    "done" or "archived" are excluded.  Answers "what can I work on right now?"
+    """
+    from palinode.core.depends import find_unblocked
+    try:
+        return find_unblocked()
+    except Exception as exc:
+        raise _safe_500(exc, "depends unblocked failed")
+
+
+@app.get("/depends/{slug:path}")
+def depends_api(slug: str) -> dict:
+    """Return the dependency neighbourhood for a given slug.
+
+    Response shape::
+
+        {
+            "slug": "milestone/M1.1-init",
+            "depends_on": [{"slug": "...", "status": "done", "found": true}, ...],
+            "blocks": [...],
+            "parallel_with": [...],
+            "unblocked": bool,
+            "orphans": ["milestone/X"],
+        }
+    """
+    from palinode.core.depends import traverse_depends
+    if not slug:
+        raise HTTPException(status_code=400, detail="slug is required")
+    try:
+        return traverse_depends(slug)
+    except Exception as exc:
+        raise _safe_500(exc, "depends traversal failed")
 
 
 @app.post("/migrate/mem0")

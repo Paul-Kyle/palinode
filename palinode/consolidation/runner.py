@@ -586,7 +586,7 @@ def run_nightly(lookback_days: int | None = None) -> dict[str, Any]:
             project_file = os.path.join(config.memory_dir, "projects", f"{project_id}.md")
             target = status_file if os.path.exists(status_file) else project_file
             
-            stats = apply_operations(target, operations)
+            stats = apply_operations(target, operations, nightly_policy=True)
             for k, v in stats.items():
                 total_stats[k] = total_stats.get(k, 0) + v
 

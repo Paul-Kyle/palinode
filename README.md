@@ -16,6 +16,21 @@ Your agent's memory is a folder of markdown files. Palinode indexes them with hy
 
 ---
 
+## Supported Platforms
+
+| Platform | Session Skill Path | MCP Config |
+|----------|--------------------|------------|
+| **Claude Code CLI** | `~/.claude/skills/` | `~/.claude.json` |
+| **Claude Desktop** | `~/.claude/skills/` | `claude_desktop_config.json` |
+| **Cursor** | `.cursor/skills/` | `.cursor/mcp.json` |
+| **VS Code + Claude** (Continue / Cline) | `~/.claude/skills/` | see [MCP-INSTALL-RECIPES.md](docs/MCP-INSTALL-RECIPES.md) |
+| **JetBrains + Claude** | `~/.claude/skills/` | `~/.claude.json` |
+| **Codex CLI** | N/A (no skills) | `~/.codex/config.toml` |
+
+All platforms share the same MCP server — install once on your server, connect from any IDE. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) and [docs/MCP-INSTALL-RECIPES.md](docs/MCP-INSTALL-RECIPES.md) for per-client config snippets.
+
+---
+
 ## The Idea
 
 Most agent memory is a black box. You can't read it, you can't diff it, you can't `grep` it when the vector DB is down. Palinode bets on **plain files as the source of truth** and builds everything else as a derived index.
@@ -50,12 +65,12 @@ Set up once on a server. Connect from any machine, any IDE, any agent framework.
 ```json
 {
   "mcpServers": {
-    "palinode": { "url": "http://your-server:6341/mcp/" }
+    "palinode": { "type": "http", "url": "http://your-server:6341/mcp/" }
   }
 }
 ```
 
-That's the entire client config. Works with Claude Code, Claude Desktop, Cursor, Windsurf, Zed, and VS Code (Continue/Cline). See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) for editor-specific install recipes.
+That's the entire client config. Works with Claude Code, Claude Desktop, Cursor, Windsurf, Zed, and VS Code (Continue/Cline). `palinode-mcp-sse` serves **streamable-HTTP** at `/mcp/` — the binary name is historical; use `"type": "http"`, not `"type": "sse"`. Always include the trailing slash in the URL. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md) for editor-specific install recipes.
 
 ---
 
@@ -117,7 +132,7 @@ cp /path/to/palinode/palinode.config.yaml.example palinode.config.yaml  # adjust
 # Start services
 PALINODE_DIR=~/.palinode palinode-api        # REST API on :6340
 PALINODE_DIR=~/.palinode palinode-watcher     # auto-indexes on file save
-PALINODE_DIR=~/.palinode palinode-mcp-sse     # MCP server on :6341 (optional)
+PALINODE_DIR=~/.palinode palinode-mcp-sse     # MCP server on :6341 (streamable-HTTP at /mcp/; optional)
 
 # Verify
 curl http://localhost:6340/status
@@ -166,7 +181,7 @@ palinode diff --days 7
 
 ## Tools
 
-21 tools available through every interface:
+25 tools available through every interface:
 
 | Tool | What It Does |
 |------|-------------|

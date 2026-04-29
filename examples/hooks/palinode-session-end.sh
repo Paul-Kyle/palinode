@@ -47,14 +47,14 @@ fi
 #   user:      {type: "user", message: {role: "user", content: "text"}}
 #   assistant: {type: "assistant", message: {content: [{type: "text", text: "..."}]}}
 #
-# `grep -c '.'` always prints a single integer (even "0") regardless of exit
-# code — so we rely on its output and use `|| true` to swallow the non-zero
-# exit that fires when no lines match. The trailing `:-0` is a final safety
-# in case the pipeline produces no stdout at all (e.g. transcript vanished).
-# Without these guards the prior code emitted "0\n0" on empty transcripts,
-# which broke the integer test below and let bogus captures through (#151).
-MSG_COUNT=$(jq -r 'select(.type == "user") | .message.content // empty' \
-  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c '.' || true)
+# Both extractions use `jq -s` (slurp) so all reductions happen INSIDE jq.
+# Earlier versions piped `jq | head -1` and `jq | grep -c '.'`, which was
+# fragile under `set -o pipefail`: `head -1` exits after one line, the
+# next jq write hits a closed pipe → SIGPIPE → pipefail aborts the script
+# (#257). Slurping reads JSONL lines into an array; map+filter+slice runs
+# without an early-exit downstream consumer.
+MSG_COUNT=$(jq -r -s 'map(select(.type == "user") | .message.content // empty) | length' \
+  "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
 MSG_COUNT=${MSG_COUNT:-0}
 
 # Skip trivial sessions (few messages = not worth a memory).
@@ -63,8 +63,8 @@ if [ "$MSG_COUNT" -lt "$MIN_MESSAGES" ]; then
 fi
 
 PROJECT=$(basename "$CWD" 2>/dev/null || echo "unknown")
-FIRST_PROMPT=$(jq -r 'select(.type == "user") | .message.content // empty' \
-  "$TRANSCRIPT_PATH" 2>/dev/null | head -1 | cut -c1-200)
+FIRST_PROMPT=$(jq -r -s 'map(select(.type == "user") | .message.content // empty) | .[0] // ""' \
+  "$TRANSCRIPT_PATH" 2>/dev/null | cut -c1-200)
 
 SUMMARY="Auto-captured (${SOURCE_REASON}, ${MSG_COUNT} messages). Topic: ${FIRST_PROMPT}"
 
