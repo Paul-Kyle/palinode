@@ -110,12 +110,17 @@ fi
 #   user:      {type: "user", message: {role: "user", content: "text"}}
 #   assistant: {type: "assistant", message: {content: [{type: "text", text: "..."}]}}
 #
-# `grep -c '.'` always prints a single integer; `|| true` swallows its
-# non-zero exit on empty match. `:-0` covers a totally empty pipeline.
-# This guards against the bug where empty transcripts produced "0\\n0",
-# breaking the integer test below and letting bogus captures through (#151).
-MSG_COUNT=$(jq -r 'select(.type == "user") | .message.content // empty' \\
-  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c '.' || true)
+# Both extractions use `jq -s` (slurp) so all reductions happen INSIDE jq.
+# Earlier versions piped `jq | head -1` and `jq | grep -c '.'`, which was
+# fragile under `set -o pipefail`: the downstream consumer exits early, the
+# next jq write hits a closed pipe → SIGPIPE → pipefail aborts the script.
+# The MSG_COUNT case was first patched with `|| true` (#151); the
+# FIRST_PROMPT case retained the same fragile shape until #267. Slurping
+# reads JSONL lines into an array; map+filter+slice runs without an
+# early-exit downstream consumer, eliminating the SIGPIPE class entirely.
+# Mirrors examples/hooks/palinode-session-end.sh fix from #257.
+MSG_COUNT=$(jq -r -s 'map(select(.type == "user") | .message.content // empty) | length' \\
+  "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
 MSG_COUNT=${MSG_COUNT:-0}
 
 # Skip trivial sessions
@@ -124,8 +129,8 @@ if [ "$MSG_COUNT" -lt "$MIN_MESSAGES" ]; then
 fi
 
 PROJECT=$(basename "$CWD" 2>/dev/null || echo "unknown")
-FIRST_PROMPT=$(jq -r 'select(.type == "user") | .message.content // empty' \\
-  "$TRANSCRIPT_PATH" 2>/dev/null | head -1 | cut -c1-200)
+FIRST_PROMPT=$(jq -r -s 'map(select(.type == "user") | .message.content // empty) | .[0] // ""' \\
+  "$TRANSCRIPT_PATH" 2>/dev/null | cut -c1-200)
 
 SUMMARY="Auto-captured (${SOURCE_REASON}, ${MSG_COUNT} messages). Topic: ${FIRST_PROMPT}"
 

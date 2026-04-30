@@ -82,6 +82,16 @@ JSON shape: `{ "mcpServers": { "palinode": { ... } } }` — same as Claude Deskt
 | Linux | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
 | Windows | `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json` |
 
+### Roo Cline (VS Code extension — fork of Cline)
+
+Roo Cline uses a different extension ID (`rooveterinaryinc.roo-cline`) and a different settings filename (`mcp_settings.json`). Same JSON shape as Cline.
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| Linux | `~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| Windows | `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\mcp_settings.json` |
+
 ### Zed
 
 Zed stores MCP servers under the `context_servers` key in its settings file — **not** `mcpServers`.
@@ -92,6 +102,23 @@ JSON shape: `{ "context_servers": { "palinode": { ... } } }`.
 | macOS (primary) | `~/.config/zed/settings.json` |
 | macOS (older builds fallback) | `~/Library/Application Support/Zed/settings.json` |
 | Linux | `~/.config/zed/settings.json` |
+
+### JetBrains IDEs (AI Assistant)
+
+JetBrains does not use a hand-edited file with a fixed path. MCP servers are
+configured via the IDE settings UI:
+
+**Settings → Tools → AI Assistant → Model Context Protocol (MCP)**
+
+The underlying config directory varies by product and version
+(`~/Library/Application Support/JetBrains/<Product><Version>/` on macOS,
+`~/.config/JetBrains/<Product><Version>/` on Linux). Use the settings panel
+rather than editing the directory directly. `palinode mcp-config --diagnose`
+does not cover JetBrains for this reason — verify the connection status in
+the IDE's MCP settings panel instead.
+
+Available in IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion, DataGrip,
+and RubyMine. Requires AI Assistant 2025.1+ (bundled in 2025.2).
 
 ### Other clients
 

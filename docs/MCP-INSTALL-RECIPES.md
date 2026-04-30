@@ -15,18 +15,29 @@ reports which ones contain a `palinode` entry. See
 
 ---
 
-## Transport quick reference
+## Which transport should I use?
 
-| Transport | Best for | Key field |
-|-----------|----------|-----------|
-| **stdio** | Palinode installed on the same machine as the IDE | `"command": "palinode-mcp"` |
-| **Streamable HTTP** | Palinode on a remote server, or any IDE that supports it | `"url": "http://host:6341/mcp/"` |
+| Transport | Config field | Use when |
+|-----------|-------------|----------|
+| **stdio** | `"command": "palinode-mcp"` | Palinode is installed on the **same machine** as the IDE |
+| **Streamable HTTP** | `"url": "http://host:6341/mcp/"` | Palinode runs on a **remote server** (homelab, VPS, dev box), or when multiple IDEs or team members share one instance |
 
-For remote HTTP setups, start `palinode-mcp-sse` *(serves streamable-HTTP at
-`/mcp/` — name is historical)* on the server before configuring the client.
-Clients should use `"type": "http"` (not `"type": "sse"`) and always include
-the trailing slash: `"url": "http://host:6341/mcp/"`. For stdio, `palinode-mcp`
-must be on PATH (`which palinode-mcp`).
+**Use stdio if:**
+- You ran `pip install palinode` on your laptop and want a single-user local setup.
+- `which palinode-mcp` prints a path.
+
+**Use HTTP if:**
+- Palinode lives on a separate machine and you connect over a network.
+- Multiple IDEs or team members should share the same memory store.
+- You want to switch IDEs without re-configuring the server.
+
+For HTTP setups, start `palinode-mcp-sse` on the server first (despite the
+name, it serves Streamable HTTP at `/mcp/`). Always include the trailing slash
+in the URL. Confirm the server is reachable before editing the IDE config:
+
+```bash
+curl http://your-server:6341/mcp/
+```
 
 ---
 
@@ -266,12 +277,21 @@ palinode mcp-config --diagnose
 
 ---
 
-## 4. Cline (VS Code)
+## 4. Cline / Roo Cline (VS Code)
 
-**Docs verified:** [docs.cline.bot/mcp/configuring-mcp-servers](https://docs.cline.bot/mcp/configuring-mcp-servers)
+**Cline docs:** [docs.cline.bot/mcp/configuring-mcp-servers](https://docs.cline.bot/mcp/configuring-mcp-servers)
 
-Cline stores MCP server config in a per-extension settings file whose path
-varies by platform:
+Both Cline and its fork **Roo Cline** use the same `mcpServers` JSON shape.
+They differ only in extension ID, config file path, and filename — pick the
+table row that matches the extension you have installed.
+
+> **Which extension do you have?** In VS Code, open the Extensions sidebar
+> (`Cmd+Shift+X` / `Ctrl+Shift+X`) and search "cline". The publisher field
+> confirms the fork: **saoudrizwan** = Cline, **RooVeterinaryInc** = Roo Cline.
+
+### Config file paths
+
+**Cline** (`saoudrizwan.claude-dev`) — file: `cline_mcp_settings.json`
 
 | Platform | Path |
 |----------|------|
@@ -279,15 +299,29 @@ varies by platform:
 | Linux | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
 | Windows | `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json` |
 
-The easiest way to open the file is from within VS Code:
+**Roo Cline** (`rooveterinaryinc.roo-cline`) — file: `mcp_settings.json`
 
-1. Open the Cline sidebar.
-2. Click the **MCP Servers** icon (plug icon) in Cline's top navigation bar.
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| Linux | `~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| Windows | `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\mcp_settings.json` |
+
+The easiest way to open the file without navigating manually:
+
+1. Click the extension's icon in the VS Code Activity Bar to open its sidebar.
+2. Click the **MCP Servers** icon (plug icon) in the top navigation bar.
 3. Select the **Installed** tab.
-4. Click **Configure MCP Servers** — this opens `cline_mcp_settings.json`
+4. Click **Configure MCP Servers** — this opens the correct settings file
    directly in the editor.
 
+> **Note:** the settings file does not exist until you open the MCP settings
+> panel at least once. Use the UI path above to let the extension create it
+> before editing.
+
 ### stdio (local install)
+
+Use this when Palinode is installed on the same machine as VS Code.
 
 ```json
 {
@@ -307,9 +341,9 @@ The easiest way to open the file is from within VS Code:
 
 ### HTTP (remote server)
 
-Cline uses `"url"` for remote MCP endpoints. `palinode-mcp-sse` serves
-streamable-HTTP at `/mcp/` (the binary name is historical). Always include
-the trailing slash in the URL:
+Use this when Palinode runs on a separate machine. Both forks use `"url"` for
+the HTTP endpoint. `palinode-mcp-sse` serves streamable-HTTP at `/mcp/` (the
+binary name is historical). Always include the trailing slash:
 
 ```json
 {
@@ -323,15 +357,23 @@ the trailing slash in the URL:
 }
 ```
 
+Replace `your-server` with your server's hostname or IP (`localhost` for a
+local HTTP server, or a stable hostname / IP for remote). Confirm the MCP
+server is reachable before configuring the client:
+
+```bash
+curl http://your-server:6341/mcp/
+```
+
 ### Restart sequence
 
-Cline picks up config changes without a VS Code restart. After saving
-`cline_mcp_settings.json`:
+Both forks pick up config changes without a VS Code restart:
 
-1. Return to the Cline sidebar → MCP Servers tab.
-2. The `palinode` entry should appear. If it shows an error badge, click
+1. Save the settings file.
+2. Return to the extension sidebar → **MCP Servers** tab.
+3. The `palinode` entry should appear. If it shows an error badge, click
    **Restart Server**.
-3. No full VS Code restart is needed.
+4. No full VS Code restart is needed.
 
 ### Verification
 
@@ -339,26 +381,52 @@ Cline picks up config changes without a VS Code restart. After saving
 palinode mcp-config --diagnose
 ```
 
-The diagnose command does not currently know Cline's globalStorage path; it
-will not report this file. Instead, verify directly in the Cline sidebar —
-the server should show as connected (green) and the tool list should expand
-to show all palinode tools.
+The diagnose command knows both Cline and Roo Cline paths — it will report
+whichever file is present. Also verify in the sidebar: the server should show
+as connected (green) and the tool list should expand to show all palinode tools.
 
-Then in a Cline conversation:
+Then in a conversation with the extension:
 
 ```
 Use palinode_status to check memory health
 ```
 
+### Reducing approval prompts
+
+Both forks prompt for approval on every MCP tool call by default. To
+pre-approve the tools you use most often, add their names to `alwaysAllow`:
+
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/",
+      "disabled": false,
+      "alwaysAllow": [
+        "palinode_search",
+        "palinode_save",
+        "palinode_status",
+        "palinode_read",
+        "palinode_list",
+        "palinode_history"
+      ]
+    }
+  }
+}
+```
+
+See [MCP-SETUP.md](MCP-SETUP.md) for the full tool list.
+
 ### Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Server shows error badge immediately | `palinode-mcp` not found on PATH. Set `"command"` to the absolute path: open a VS Code terminal, activate your palinode venv, run `which palinode-mcp` |
-| `cline_mcp_settings.json` not found | The file does not exist until you open Cline's MCP settings at least once. Use the UI path above to let Cline create it |
-| Tools appear but all fail | Palinode API not running. Run `curl http://127.0.0.1:6340/status` from a terminal |
-| HTTP: `url` field ignored | Confirm the key is lowercase `"url"` — Cline does not accept `serverUrl` |
-| `alwaysAllow` prompts every tool call | Add the tool names to the `alwaysAllow` array: `["palinode_search", "palinode_save", "palinode_status"]` |
+| Server shows error badge immediately | `palinode-mcp` not found on PATH. Open a VS Code terminal, activate your palinode venv, run `which palinode-mcp` — use that absolute path as `"command"` |
+| Settings file not found | Open the MCP settings panel from the extension UI (step 4 above) to let the extension create it, then edit |
+| Tools appear but all fail | Palinode API not running. `curl http://127.0.0.1:6340/status` should return JSON |
+| HTTP: `url` field ignored | Confirm the key is lowercase `"url"` — neither fork accepts `serverUrl` |
+| HTTP: cannot connect to remote | Confirm `palinode-mcp-sse` is running on the server: `curl http://your-server:6341/mcp/` |
+| Wrong file edited — change had no effect | Run `palinode mcp-config --diagnose` to see which file your installed extension reads |
 
 ---
 
@@ -455,9 +523,84 @@ Use palinode_status to check memory health
 
 ---
 
+## 6. JetBrains IDEs (AI Assistant)
+
+**Docs:** [jetbrains.com/help/ai-assistant/configure-an-mcp-server.html](https://www.jetbrains.com/help/ai-assistant/configure-an-mcp-server.html)
+
+The MCP client is built into the **AI Assistant** plugin, available in
+IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion, DataGrip, and
+RubyMine. It is bundled in 2025.2+; for 2025.1 install the AI Assistant
+plugin from the marketplace.
+
+> **JetBrains is UI-first.** MCP servers are configured via the IDE settings
+> panel, not a hand-edited file. The underlying config directory varies by
+> product and version — use the UI path below rather than editing files
+> directly.
+
+### Add via settings UI
+
+1. Open **Settings** (`Cmd+,` on macOS / `Ctrl+Alt+S` on Windows/Linux).
+2. Navigate to **Tools → AI Assistant → Model Context Protocol (MCP)**.
+3. Click **+** (Add) and choose **As JSON**.
+4. Paste the appropriate snippet below.
+5. Click **Apply** — this starts the server immediately. No restart needed.
+
+> **Settings Sync:** If you use JetBrains Settings Sync, the MCP config
+> propagates automatically to all your other JetBrains IDEs.
+
+### stdio (local install)
+
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "command": "palinode-mcp",
+      "args": [],
+      "env": {
+        "PALINODE_API_HOST": "127.0.0.1",
+        "PALINODE_API_PORT": "6340"
+      }
+    }
+  }
+}
+```
+
+### HTTP (remote server)
+
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/"
+    }
+  }
+}
+```
+
+### Verification
+
+After clicking Apply, open the AI Assistant chat panel. In Agent mode, the
+tool list should include all palinode tools. Then run:
+
+```
+Use palinode_status to check memory health
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Server entry saves but tools never appear | Re-open **Settings → Tools → AI Assistant → MCP** and confirm the entry is enabled |
+| stdio server fails immediately | Replace `"command": "palinode-mcp"` with the absolute path returned by `which palinode-mcp` in the same shell environment the IDE inherits |
+| HTTP server fails immediately | Confirm the server is reachable first: `curl http://your-server:6341/mcp/` |
+| Config seems to disappear across IDEs | Check whether JetBrains Settings Sync is enabled and overwriting the MCP entry from another machine |
+| Unsure where the config lives on disk | Use the settings UI; the path is product- and version-specific, which is why `palinode mcp-config --diagnose` does not try to manage it |
+
+---
+
 ## Environment variable reference
 
-All five clients above can pass env vars to the stdio `palinode-mcp` process.
+All six clients above can pass env vars to the stdio `palinode-mcp` process.
 The full variable set:
 
 | Variable | Default | Purpose |

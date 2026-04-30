@@ -75,32 +75,37 @@ def test_ps_and_wrap_are_different():
     assert PS_COMMAND_BODY != WRAP_COMMAND_BODY
 
 
-# ---- Hook script message-count extraction (#151) ------------------------
+# ---- Hook script slurp-based extraction (#151, #267, mirrors #257) -------
 
 
-def test_hook_script_count_extraction_uses_safe_pattern():
-    """`grep -c` always prints an integer; `|| echo "0"` would double-print
-    on empty match, producing "0\\n0" which broke the integer test in #151.
-    Guard against re-introducing the bug with a string check."""
-    # Old (broken) pattern must be absent
-    assert 'grep -c \'.\' 2>/dev/null || echo "0"' not in HOOK_SCRIPT
-    assert 'grep -c "." 2>/dev/null || echo "0"' not in HOOK_SCRIPT
-    # New pattern must be present (single integer guarantee + safe default)
-    assert "grep -c '.' || true" in HOOK_SCRIPT
+def test_hook_script_uses_slurp_extraction():
+    """Both MSG_COUNT and FIRST_PROMPT must use `jq -s` (slurp) extraction.
+    The earlier piped patterns (`jq | grep -c '.'` and `jq | head -1 | cut`)
+    were fragile under `set -o pipefail`: downstream early-exit triggers
+    SIGPIPE on jq. #151 patched MSG_COUNT with `|| true`; #267 + #257 moved
+    both to slurp, which has no early-exit downstream consumer and thus
+    no SIGPIPE class to swallow. Guard against regression."""
+    # Old fragile patterns must be absent
+    assert "grep -c '.' || true" not in HOOK_SCRIPT
+    assert "head -1 | cut -c1-200)" not in HOOK_SCRIPT
+    assert "head -1 | cut -c1-200 || true" not in HOOK_SCRIPT
+    # New slurp patterns must be present
+    assert "jq -r -s 'map(select(.type == \"user\") | .message.content // empty) | length'" in HOOK_SCRIPT
+    assert "jq -r -s 'map(select(.type == \"user\") | .message.content // empty) | .[0] // \"\"'" in HOOK_SCRIPT
+    # Safe default for MSG_COUNT must remain
     assert "MSG_COUNT=${MSG_COUNT:-0}" in HOOK_SCRIPT
 
 
 def test_hook_script_drops_empty_transcript(tmp_path):
     """Empty transcript ⇒ MSG_COUNT=0 ⇒ filter drops, no save attempted.
-    Behavioral test extracted from the script's exact extraction line, run
-    against a real bash subprocess so any shell-quoting regression is caught."""
+    Exercises the slurp extraction directly to catch shell-quoting regressions."""
     transcript = tmp_path / "empty.jsonl"
     transcript.write_text("")
     snippet = (
         f'set -euo pipefail; '
         f'TRANSCRIPT_PATH={transcript}; '
-        f'MSG_COUNT=$(jq -r \'select(.type == "user") | .message.content // empty\' '
-        f'  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c \'.\' || true); '
+        f'MSG_COUNT=$(jq -r -s \'map(select(.type == "user") | .message.content // empty) | length\' '
+        f'  "$TRANSCRIPT_PATH" 2>/dev/null || echo 0); '
         f'MSG_COUNT=${{MSG_COUNT:-0}}; '
         f'echo "result=$MSG_COUNT"; '
         f'[ "$MSG_COUNT" -lt 3 ] && echo "drops" || echo "saves"'
@@ -126,14 +131,39 @@ def test_hook_script_counts_user_messages_correctly(tmp_path):
     snippet = (
         f'set -euo pipefail; '
         f'TRANSCRIPT_PATH={transcript}; '
-        f'MSG_COUNT=$(jq -r \'select(.type == "user") | .message.content // empty\' '
-        f'  "$TRANSCRIPT_PATH" 2>/dev/null | grep -c \'.\' || true); '
+        f'MSG_COUNT=$(jq -r -s \'map(select(.type == "user") | .message.content // empty) | length\' '
+        f'  "$TRANSCRIPT_PATH" 2>/dev/null || echo 0); '
         f'MSG_COUNT=${{MSG_COUNT:-0}}; '
         f'echo "result=$MSG_COUNT"'
     )
     proc = subprocess.run(["/bin/bash", "-c", snippet], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert "result=5" in proc.stdout
+
+
+def test_hook_script_first_prompt_extracts_correctly(tmp_path):
+    """Multi-message transcript ⇒ FIRST_PROMPT extracts the FIRST user message
+    and survives `set -euo pipefail` cleanly (no SIGPIPE because slurp has
+    no early-exit downstream consumer). Regression guard for #267."""
+    transcript = tmp_path / "multi.jsonl"
+    transcript.write_text(
+        '{"type":"user","message":{"content":"first message — must surface"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"reply"}]}}\n'
+        '{"type":"user","message":{"content":"second"}}\n'
+        '{"type":"user","message":{"content":"third"}}\n'
+        '{"type":"user","message":{"content":"fourth"}}\n'
+        '{"type":"user","message":{"content":"fifth"}}\n'
+    )
+    snippet = (
+        f'set -euo pipefail; '
+        f'TRANSCRIPT_PATH={transcript}; '
+        f'FIRST_PROMPT=$(jq -r -s \'map(select(.type == "user") | .message.content // empty) | .[0] // ""\' '
+        f'  "$TRANSCRIPT_PATH" 2>/dev/null | cut -c1-200); '
+        f'echo "result=$FIRST_PROMPT"'
+    )
+    proc = subprocess.run(["/bin/bash", "-c", snippet], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "result=first message — must surface" in proc.stdout
 
 
 # ---- Hook script reason filter (#149) -----------------------------------

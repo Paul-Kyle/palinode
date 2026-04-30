@@ -188,7 +188,7 @@ What's stuck and why. (Clear this when resolved.)
 ## Key Decisions
 Link to decision files or inline summaries of major architectural/creative choices.
 - [decision/langgraph-adoption] — why LangGraph
-- [decision/port-dont-rewrite] — ADR-070
+- [decision/port-dont-rewrite] — why the port changed
 
 ## Lessons Learned
 Things this project has taught us. (Fed by consolidation from insights.)

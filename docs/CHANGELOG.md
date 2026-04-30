@@ -4,10 +4,15 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ## Unreleased
 
-## [0.8.5] — 2026-04-28
+## [0.8.6] — 2026-04-29
 
 ### Added
 
+- `pyproject.toml` bumped to **v0.8.6** and `[tool.setuptools] packages` list corrected: `palinode.diagnostics`, `palinode.diagnostics.checks`, `palinode.import_`, and `palinode.lint` were missing and would have been silently omitted from the wheel. All declared packages now match on-disk layout.
+- `palinode mcp-config --diagnose` now covers **Roo Cline** (`rooveterinaryinc.roo-cline`) in addition to the original Cline extension. Roo Cline uses a different extension ID and settings filename (`mcp_settings.json` instead of `cline_mcp_settings.json`).
+- `docs/MCP-INSTALL-RECIPES.md` — new **JetBrains AI Assistant** section (section 6): stdio and HTTP snippets, settings UI path, Settings Sync note, troubleshooting table. Covers IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion, DataGrip, RubyMine.
+- `docs/MCP-INSTALL-RECIPES.md` — transport quick reference expanded into a "which transport?" decision block with use-when guidance.
+- `docs/MCP-CONFIG-HOMES.md` — JetBrains section added (UI-first, version-specific path caveat) and Roo Cline paths added. Closes public #24.
 - `tests/integration/test_mcp_e2e.py` — E2E test suite for the MCP client flow: exercises every major MCP tool (search, save, session_end, status, read, history, doctor, list) via in-process FastAPI dispatch with no Ollama required (#122).
 - `tests/integration/test_security.py` — Security test suite covering OWASP top-10: path traversal, null bytes, symlink escape, SQL injection, SSRF, CORS enforcement, rate limiting, request size limit, no stack traces, YAML injection, CRLF header injection, and XSS/script injection (#123).
 - `palinode_cluster_neighbors` / `palinode cluster-neighbors` / `POST /cluster-neighbors` — given a memory file path, returns the top-K semantically related files that are NOT already wikilinked to or from it; surfaces implicit relationships for the LLM to propose new cross-links (#235).
@@ -42,6 +47,7 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- `palinode init` HOOK_SCRIPT (the scaffolded SessionEnd hook) now uses `jq -s` slurp extraction for both MSG_COUNT and FIRST_PROMPT, eliminating the SIGPIPE class entirely. #257 fixed the same bug pattern in `examples/hooks/palinode-session-end.sh` but the scaffolded version in `palinode/cli/init.py` was missed; #267 closes that gap so `palinode init` produces a non-buggy hook on fresh installs.
 - Default `audit.log_path` is now resolved to an absolute path under `memory_dir` at config load time, eliminating the spurious `audit_log_writable` doctor warning on every fresh install (#254).
 - `mcp_config_homes` doctor check no longer reports a misleading "run \`palinode init\`" message when palinode is running over SSH stdio — detects `SSH_CONNECTION` and returns an informational result explaining the remote context (#255).
 - `0.0.0.0` binding warning is now suppressed when `PALINODE_API_BIND_INTENT=public` is set, allowing intentional network-exposed deployments (e.g., Tailscale) to start quietly. The systemd API service template sets this by default (#253).

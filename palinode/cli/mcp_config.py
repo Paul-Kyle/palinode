@@ -80,6 +80,13 @@ def _candidate_paths() -> list[tuple[str, Path]]:
             / "globalStorage" / "saoudrizwan.claude-dev" / "settings"
             / "cline_mcp_settings.json",
         ))
+        # Roo Cline — fork of Cline, different extension ID and settings filename
+        paths.append((
+            "Roo Cline (macOS) — ~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            home / "Library" / "Application Support" / "Code" / "User"
+            / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings"
+            / "mcp_settings.json",
+        ))
     elif system == "Windows":
         import os
         appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
@@ -88,12 +95,22 @@ def _candidate_paths() -> list[tuple[str, Path]]:
             appdata / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev"
             / "settings" / "cline_mcp_settings.json",
         ))
+        paths.append((
+            "Roo Cline (Windows) — %APPDATA%\\Code\\User\\globalStorage\\rooveterinaryinc.roo-cline\\settings\\mcp_settings.json",
+            appdata / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline"
+            / "settings" / "mcp_settings.json",
+        ))
     else:
         # Linux
         paths.append((
             "Cline (Linux) — ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
             home / ".config" / "Code" / "User" / "globalStorage"
             / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+        ))
+        paths.append((
+            "Roo Cline (Linux) — ~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            home / ".config" / "Code" / "User" / "globalStorage"
+            / "rooveterinaryinc.roo-cline" / "settings" / "mcp_settings.json",
         ))
 
     # Zed — context_servers block in settings.json
