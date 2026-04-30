@@ -1,8 +1,7 @@
 #!/bin/bash
 # check-shipping-leaks.sh — fast pre-merge leak scanner for public-shipping files.
 #
-# Unlike scripts/scrub-check.sh (which scans an entire public-tree clone),
-# this scans only the files that would ship publicly, in the dev repo, on
+# This scans only the files that would ship publicly, in the dev repo, on
 # the current branch. Designed for speed: run as a pre-commit hook or in
 # CI on every PR.
 #
@@ -20,7 +19,7 @@
 set -euo pipefail
 
 # Patterns that must NEVER appear in public-shipping files.
-# Synced with scripts/scrub-check.sh and SYNC-PUBLIC.md.
+# Synced with SYNC-PUBLIC.md.
 PATTERNS=(
     # Private IPs and infrastructure
     '10\.2\.1\.(61|65|69)'
@@ -113,10 +112,14 @@ DEV_ONLY_PREFIXES=(
     '.github/PULL_REQUEST_TEMPLATE.md'
 )
 
+# Public repo paths that must never be tracked at all.
+FORBIDDEN_PUBLIC_PATHS=(
+    'scripts/scrub-check.sh'
+)
+
 # Files that intentionally contain the blocked patterns as scanner inputs.
 # Skip them so the scanner does not flag its own source data.
 SCANNER_SOURCES=(
-    'scripts/scrub-check.sh'
     'scripts/check-shipping-leaks.sh'
     # Tests may enumerate forbidden patterns as part of the guard itself.
     'tests/test_deploy_systemd.py'
@@ -159,6 +162,16 @@ if [ "${#FILES[@]}" -eq 0 ]; then
     echo "check-shipping-leaks: no input files (mode=$MODE) — nothing to scan."
     exit 0
 fi
+
+for f in "${FILES[@]}"; do
+    normalized="${f#./}"
+    for forbidden in "${FORBIDDEN_PUBLIC_PATHS[@]}"; do
+        if [ "$normalized" = "$forbidden" ]; then
+            echo "FORBIDDEN PATH — $forbidden is tracked in the public tree."
+            exit 1
+        fi
+    done
+done
 
 # ── Filter to public-shipping files ───────────────────────────────────────────
 
