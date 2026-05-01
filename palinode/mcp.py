@@ -1653,10 +1653,12 @@ def main_http() -> None:
         ],
     )
 
+    # B104 rationale - opt-in MCP HTTP server fallback; deployers must set
+    # PALINODE_MCP_HTTP_HOST for a restricted bind (e.g., 127.0.0.1).
     host = (
         os.environ.get("PALINODE_MCP_HTTP_HOST")
         or os.environ.get("PALINODE_MCP_SSE_HOST")  # legacy alias
-        or "0.0.0.0"
+        or "0.0.0.0"  # nosec B104
     )
     port = int(
         os.environ.get("PALINODE_MCP_HTTP_PORT")

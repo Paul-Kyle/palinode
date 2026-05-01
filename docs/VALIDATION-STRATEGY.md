@@ -18,7 +18,7 @@ L1–L3 are necessary but not sufficient. You can have a perfectly indexed, perf
 - The CLAUDE.md session-start instructions are too vague ("call `palinode_search` when relevant" leaves the trigger to the model's judgment)
 - The agent prioritizes its general knowledge over a `palinode_search` call
 - The search query the agent forms doesn't match the record's content (compositional terms, synonyms, capitalization)
-- The context-prime path is off (no project entity boost)
+- The context-prime path is off (ADR-009 misconfigured, no project entity boost)
 
 L4 is the only test that catches these. It's also the hardest to automate — it requires an LLM in the loop. See [#42](https://github.com/phasespace-labs/palinode/issues/42) for the automated-L4 path.
 

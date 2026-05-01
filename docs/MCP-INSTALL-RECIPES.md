@@ -287,7 +287,7 @@ table row that matches the extension you have installed.
 
 > **Which extension do you have?** In VS Code, open the Extensions sidebar
 > (`Cmd+Shift+X` / `Ctrl+Shift+X`) and search "cline". The publisher field
-> confirms the fork: **saoudrizwan** = Cline, **RooVeterinaryInc** = Roo Cline.
+> confirms the fork: **saoudrizwan** = Cline, **RooVeteriaryInc** = Roo Cline.
 
 ### Config file paths
 
@@ -501,9 +501,9 @@ open it and check that `palinode` appears in the tool list.
 palinode mcp-config --diagnose
 ```
 
-Zed's `settings.json` path is not currently in palinode's diagnose list (it
-uses `context_servers`, not `mcpServers`). Verify directly in Zed's
-Assistant panel — the server should appear in the available tools list.
+The diagnose command checks both `mcpServers` and `context_servers` keys —
+it will report the Zed entry if the palinode block is present. Also verify
+directly in Zed's Assistant panel: the server should appear in the tool list.
 
 Then in a Zed assistant conversation:
 
@@ -586,21 +586,24 @@ tool list should include all palinode tools. Then run:
 Use palinode_status to check memory health
 ```
 
+`palinode mcp-config --diagnose` does not cover JetBrains (the config path
+varies by product and version). Use the IDE's MCP settings panel to verify
+the connection status instead.
+
 ### Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Server entry saves but tools never appear | Re-open **Settings → Tools → AI Assistant → MCP** and confirm the entry is enabled |
-| stdio server fails immediately | Replace `"command": "palinode-mcp"` with the absolute path returned by `which palinode-mcp` in the same shell environment the IDE inherits |
-| HTTP server fails immediately | Confirm the server is reachable first: `curl http://your-server:6341/mcp/` |
-| Config seems to disappear across IDEs | Check whether JetBrains Settings Sync is enabled and overwriting the MCP entry from another machine |
-| Unsure where the config lives on disk | Use the settings UI; the path is product- and version-specific, which is why `palinode mcp-config --diagnose` does not try to manage it |
+| Server shows a red error indicator | Likely a PATH problem. In stdio mode, set `"command"` to the absolute path: open a terminal inside the IDE, activate your venv, run `which palinode-mcp` |
+| Tools appear in settings but not in chat | Ensure you are using **Agent** mode in AI Assistant, not the plain Chat mode |
+| Apply does nothing / server never connects | Confirm `palinode-api` is running: `curl http://127.0.0.1:6340/status` |
+| HTTP: cannot connect | Confirm `palinode-mcp-sse` is running on the server: `curl http://your-server:6341/mcp/` |
 
 ---
 
 ## Environment variable reference
 
-All six clients above can pass env vars to the stdio `palinode-mcp` process.
+All stdio clients above can pass env vars to the `palinode-mcp` process.
 The full variable set:
 
 | Variable | Default | Purpose |

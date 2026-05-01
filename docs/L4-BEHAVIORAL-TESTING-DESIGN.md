@@ -18,7 +18,7 @@ L4 is the only layer that catches:
   surfaces because the CLAUDE.md session-start instructions are too vague.
 - A model that calls the wrong tool despite a deterministic prompt
   (the `/wrap` and `/ps` slash commands rely on the model honouring
-  "always call X, never Y" — see issue #140).
+  "always call X, never Y" — see ADR-010 and issue #140).
 - Search-query phrasing mismatches between what the agent forms and what
   the indexer stored.
 
@@ -113,7 +113,7 @@ Concrete data points the team should sanity-check before picking option A:
   right thing to design once and apply twice.
 - **`docs/VALIDATION-STRATEGY.md`** — the four-layer model. L4's
   current status there is "Gap — see #42" (the now-renumbered #140).
-- The principle that `/wrap` and `/ps` are deterministic.
+- **ADR-010** — the principle that `/wrap` and `/ps` are deterministic.
   L4 is the test that validates the principle holds end-to-end against
   a real model, not just at the prompt-text level.
 

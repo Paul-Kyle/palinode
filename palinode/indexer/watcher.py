@@ -66,8 +66,9 @@ class PalinodeHandler(FileSystemEventHandler):
         """Hits the summary generation API to auto-fill missing summaries."""
         logger.info("Triggering POST /generate-summaries from watcher...")
         try:
-            req = urllib.request.Request("http://127.0.0.1:6340/generate-summaries", method="POST")
-            urllib.request.urlopen(req, timeout=300)
+            # B310 rationale - hardcoded loopback URL to local palinode-api; no user-controlled scheme
+            req = urllib.request.Request("http://127.0.0.1:6340/generate-summaries", method="POST")  # nosec B310
+            urllib.request.urlopen(req, timeout=300)  # nosec B310
         except Exception as e:
             logger.warning(f"Failed to trigger /generate-summaries process: {e}")
 

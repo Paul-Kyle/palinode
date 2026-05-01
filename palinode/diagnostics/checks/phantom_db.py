@@ -169,17 +169,18 @@ def phantom_db_files(ctx: DoctorContext) -> CheckResult:
             f"{len(extras)} phantom .palinode.db file(s) found outside configured path "
             f"({configured}):\n{detail_block}"
         ),
+        # B608 rationale - human-readable remediation text, not a SQL query (bandit false positive on f-strings inside this block)
         remediation=(
-            "Stale DB files were found.  A stale palinode-watcher or palinode-api "
+            "Stale DB files were found.  A stale palinode-watcher or palinode-api "  # nosec B608
             "process may still be writing to one of them with old env vars.\n"
             "Steps:\n"
             "  1. Confirm the configured DB contains the data you expect:\n"
-            f"       sqlite3 {configured} 'SELECT count(*) FROM chunks'\n"
+            f"       sqlite3 {configured} 'SELECT count(*) FROM chunks'\n"  # nosec B608
             "  2. Restart all palinode services to ensure nothing is writing "
             "to the phantom DB.\n"
             "  3. Move (do NOT delete) each phantom to a .bak sibling:\n"
             + "\n".join(
-                f"       mv {e['path']} {e['path']}.bak" for e in extras
+                f"       mv {e['path']} {e['path']}.bak" for e in extras  # nosec B608
             )
             + "\n"
             "See the related diagnostics above."

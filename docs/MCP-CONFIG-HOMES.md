@@ -126,7 +126,7 @@ and RubyMine. Requires AI Assistant 2025.1+ (bundled in 2025.2).
 |--------|-------------|
 | Cursor | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| VS Code (Continue) | `~/.continue/config.json` |
+| VS Code (Continue) | `~/.continue/config.yaml` |
 
 ---
 

@@ -43,6 +43,14 @@ def _utc_now() -> datetime:
 def _run_git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
     """Run a git command in the memory data directory.
 
+    Security note: this is the only entry point through which any palinode
+    code in this module touches ``subprocess``. The argv-list form is used
+    deliberately — never ``shell=True``, never string-interpolated commands
+    — so user-supplied inputs (file paths, commit messages, search terms,
+    refs) cannot inject shell metacharacters. Callers MUST forward their
+    arguments through this helper rather than constructing their own
+    subprocess invocations.
+
     Args:
         *args: Git arguments (e.g., 'log', '--oneline', '-10').
         check: If True, raise on non-zero exit.
@@ -50,7 +58,10 @@ def _run_git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
     Returns:
         CompletedProcess with stdout and stderr.
     """
-    return subprocess.run(
+    # bandit: argv-form invocation; shell=False (default). User-supplied
+    # arguments are passed as separate list elements, not interpolated into
+    # a shell command string. See module docstring for the security model.
+    return subprocess.run(  # nosec B603 - argv form, no shell, validated cwd
         ["git", *args],
         capture_output=True,
         text=True,

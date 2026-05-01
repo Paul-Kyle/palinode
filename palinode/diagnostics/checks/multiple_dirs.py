@@ -66,13 +66,14 @@ def multiple_palinode_dirs(ctx: DoctorContext) -> CheckResult:
             f"PALINODE_DIR env var and config memory_dir disagree — "
             f"env: {env_dir}  config: {config_dir}"
         ),
+        # B608 rationale - human-readable remediation text, not a SQL query (bandit false positive on f-strings inside this block)
         remediation=(
-            "The PALINODE_DIR environment variable overrides memory_dir from "
+            "The PALINODE_DIR environment variable overrides memory_dir from "  # nosec B608
             "palinode.config.yaml.  They currently point to different locations.\n"
             "If you recently renamed the data directory and updated PALINODE_DIR "
             "but forgot to update the YAML, fix the YAML to match:\n"
-            f"  Open palinode.config.yaml and set:\n"
-            f"    memory_dir: {env_dir}\n"
+            f"  Open palinode.config.yaml and set:\n"  # nosec B608
+            f"    memory_dir: {env_dir}\n"  # nosec B608
             "  Then restart palinode-api and palinode-watcher.\n"
             "If the env var is stale, unset it:\n"
             "  unset PALINODE_DIR\n"

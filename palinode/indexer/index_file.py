@@ -166,9 +166,10 @@ def index_file(filepath: str, *, content: str | None = None) -> dict[str, Any]:
                 )
             except Exception:
                 pass
-        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", to_delete)
+        # B608 rationale - placeholders is "?,?,..." built from len(to_delete); values bound via to_delete
+        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", to_delete)  # nosec B608
         try:
-            cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", to_delete)
+            cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", to_delete)  # nosec B608
         except Exception:
             pass
         db.commit()

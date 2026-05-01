@@ -372,8 +372,9 @@ def delete_file_chunks(file_path: str) -> None:
                 pass  # FTS5 may be out of sync — periodic rebuild handles this
         
         placeholders, params = _parameterize_in_clause(ids)
-        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", params)
-        cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", params)
+        # B608 rationale - placeholders is "?,?,..." from _parameterize_in_clause; values bound via params
+        cursor.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", params)  # nosec B608
+        cursor.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", params)  # nosec B608
         
     cursor.execute("DELETE FROM entities WHERE file_path = ?", (file_path,))
     db.commit()
@@ -1168,16 +1169,17 @@ def search_associative(
             break
         
         ph, activated_params = _parameterize_in_clause(activated_list)
+        # B608 rationale - ph is "?,?,..." from _parameterize_in_clause; values bound via activated_params
         rows = db.execute(f"""
             SELECT DISTINCT e2.entity_ref, COUNT(*) as co_count
             FROM entities e1
-            JOIN entities e2 ON e1.file_path = e2.file_path 
+            JOIN entities e2 ON e1.file_path = e2.file_path
                 AND e1.entity_ref != e2.entity_ref
             WHERE e1.entity_ref IN ({ph})
             GROUP BY e2.entity_ref
             ORDER BY co_count DESC
             LIMIT 20
-        """, activated_params).fetchall()
+        """, activated_params).fetchall()  # nosec B608
         
         for row in rows:
             neighbor = row[0]
@@ -1202,12 +1204,13 @@ def search_associative(
         return []
     
     ph, entity_params = _parameterize_in_clause(activated_entities)
+    # B608 rationale - ph is "?,?,..." from _parameterize_in_clause; values bound via entity_params
     files = db.execute(f"""
         SELECT DISTINCT e.file_path, MAX(?) as activation_score
         FROM entities e
         WHERE e.entity_ref IN ({ph})
         GROUP BY e.file_path
-    """, (max(activation.values()), *entity_params)).fetchall()
+    """, (max(activation.values()), *entity_params)).fetchall()  # nosec B608
     
     db.close()
     

@@ -43,7 +43,7 @@
 
         palinodePackage = python.pkgs.buildPythonApplication {
           pname = "palinode";
-          version = "0.8.5";
+          version = "0.8.0";
           format = "pyproject";
 
           src = ./.;

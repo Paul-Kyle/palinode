@@ -54,7 +54,7 @@ Extract only things that will be useful **across sessions** — facts that a fut
 
 **Commitments and action items** — things promised to people, deadlines agreed to, follow-ups needed.
 
-- *Example:* "Alice will follow up with legal about the licensing review." → ActionItem.
+- *Example:* "Alice will follow up with legal about copyright clearance." → ActionItem.
 - *Example:* "Q3 Marketing Launch due Week 10 (April 14)." → ActionItem linked to project/marketing-launch.
 
 ### Sometimes extract
@@ -188,7 +188,7 @@ What's stuck and why. (Clear this when resolved.)
 ## Key Decisions
 Link to decision files or inline summaries of major architectural/creative choices.
 - [decision/langgraph-adoption] — why LangGraph
-- [decision/port-dont-rewrite] — why the port changed
+- [decision/port-dont-rewrite] — ADR-070
 
 ## Lessons Learned
 Things this project has taught us. (Fed by consolidation from insights.)
@@ -299,7 +299,7 @@ The canonical form of an entity reference is **lowercase, hyphens-not-spaces, `k
 
 - `person/alice-smith` (not `Person/Alice Smith`, not `alice_smith`, not `alice smith`)
 - `project/palinode`
-- `decision/reviewability-over-speed`
+- `decision/tools-over-pipeline`
 - `insight/curation-beats-volume`
 
 The body `[[wikilink]]` may be the human-readable label (`[[Alice Smith]]`) or the slug (`[[alice-smith]]`) — both resolve to the same target file. Whichever you write, the corresponding `entities:` value is always the canonical `kind/slug` form. A body line `Met with [[Alice Smith]] about Q3 planning` requires `entities: [person/alice-smith]` in the frontmatter.

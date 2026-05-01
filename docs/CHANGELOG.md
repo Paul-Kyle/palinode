@@ -4,6 +4,80 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## [0.8.8] — 2026-05-01
+
+A pure-security release in response to the MCP Marketplace security audit.
+Closes 27 of the 30 findings (5 critical, 8 high, 12 medium, 2 low). No
+breaking changes; all hardening is additive. Local-first deployments keep
+working without ceremony.
+
+### Security
+
+- **Optional bearer-token authentication on the API server.** Set
+  `PALINODE_API_TOKEN` (or `PALINODE_API_TOKEN_FILE` for docker-secrets
+  style deployments) to require `Authorization: Bearer <token>` on every
+  request other than `/health` and `/health/watcher`. Off by default to
+  preserve zero-friction local dev. The startup gate now refuses to launch
+  when `PALINODE_API_BIND_INTENT=public` is set without a token, closing
+  the public-bind hardening gap. Comparison uses `hmac.compare_digest` to
+  remove the timing side-channel. The gate fires at module import so it
+  triggers under `uvicorn palinode.api.server:app` (the canonical systemd
+  ExecStart pattern), not just from `main()`.
+- **Dependency lower-bounds added** to exclude 15 known CVEs against
+  `pyyaml`, `httpx`, `sqlite-vec`, `fastapi`, `uvicorn`, `pydantic`, and
+  `mcp`. All currently-installed versions are already past the fix
+  windows; this codifies that floor.
+- **Path traversal hardening** in `_resolve_memory_path` migrated from
+  `os.path.realpath`/`commonpath` to `pathlib.Path.resolve(strict=True)`
+  + `Path.is_relative_to()`. Generic `"Invalid path"` returned to clients
+  (no filesystem-info leak); original input logged at INFO for operators.
+- **Streaming body-size enforcement.** New ASGI middleware counts bytes
+  per chunk and rejects with HTTP 413 mid-stream. Closes the
+  chunked-encoding bypass that the previous header-only check missed.
+- **Wiki footer entity validation.** Slugs must match `^[A-Za-z0-9._-]+$`
+  before being emitted inside `[[wikilinks]]`; malformed slugs are
+  dropped with a warning rather than corrupting markdown.
+- **LLM prompt content** in `_generate_description` and `_generate_summary`
+  now wrapped in `<user_content>` delimited tags with neutralization of
+  injected close tags. Best-effort defense against prompt-injection.
+- **Subprocess argv-form audit** confirmed all `subprocess.run` calls in
+  the codebase use list-of-args, never `shell=True`. AST-based test in
+  `tests/test_subprocess_argv_form.py` fails CI on any future regression.
+- **CORS wildcard rejection** at startup. `PALINODE_CORS_ORIGINS=*` now
+  refuses to launch with a clear error; each origin must parse as a
+  valid http/https URL with non-empty netloc.
+- **Secret-redacting logging filter** prevents API keys (`sk-...`,
+  `xoxb-...`, AWS keys) and basic-auth-in-URL credentials from leaking
+  via `logger.exception()` tracebacks if a memory file contains them.
+- **Rate limiter dict bounded.** `_rate_counters` now prunes expired
+  entries on every check and caps at `PALINODE_RATE_LIMIT_MAX_KEYS`
+  (default 10000) with oldest-window eviction. Prevents memory growth
+  under varied-IP scans.
+- **TOCTOU mitigation** in file reads. New `_open_memory_file_text()`
+  helper uses `os.open(..., O_RDONLY | O_NOFOLLOW)` so symlink swaps
+  raise `OSError` rather than silently following the link.
+- **Narrowed broad `except Exception` blocks** at LLM, HTTP, and git
+  call sites. Specific exception types (`httpx.HTTPError`, `OSError`,
+  `json.JSONDecodeError`, etc.) make root-cause tracing easier and
+  prevent operational errors from masking security signal.
+
+### Fixed
+
+- CI security-scan job: bandit findings annotated with `# nosec` plus
+  rationale rather than suppressed wholesale. `pip-audit` now runs (was
+  blocked by the bandit failure in v0.8.5).
+- `INSTALL-CLAUDE-CODE.md` tool count corrected (21 → 25) and four
+  previously-undocumented tools added to the table:
+  `palinode_cluster_neighbors`, `palinode_topic_coverage`,
+  `palinode_depends`, and `palinode_timeline` (deprecated alias).
+
+### Internal
+
+- Confirmed `search_api` uses parameterized SQL throughout, FTS5 input
+  sanitization, and bounded result-limits — no LLM call inside.
+- Pre-existing test flake `test_session_end_creates_daily_and_individual`
+  (dedup collision) is unrelated to this release; tracked separately.
+
 ## [0.8.6] — 2026-04-29
 
 ### Added
@@ -17,7 +91,7 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 - `tests/integration/test_security.py` — Security test suite covering OWASP top-10: path traversal, null bytes, symlink escape, SQL injection, SSRF, CORS enforcement, rate limiting, request size limit, no stack traces, YAML injection, CRLF header injection, and XSS/script injection (#123).
 - `palinode_cluster_neighbors` / `palinode cluster-neighbors` / `POST /cluster-neighbors` — given a memory file path, returns the top-K semantically related files that are NOT already wikilinked to or from it; surfaces implicit relationships for the LLM to propose new cross-links (#235).
 - `palinode_topic_coverage` / `palinode topic-coverage` / `POST /topic-coverage` — given a topic phrase, returns `{covered, best_match, similarity}` indicating whether an existing wiki page already covers the topic; use before ingesting new content to avoid redundancy (#235).
-- Both new tools are exposed across all four surfaces (MCP, REST API, CLI, parity registry) and covered by `tests/test_embedding_tools.py` (#235).
+- Both new tools are exposed across all four cross-surface targets (MCP, REST API, CLI, parity registry) and covered by `tests/test_embedding_tools.py` (#235).
 - IETF KU frontmatter alignment (issue #106): `parse_ku_fields()` in `palinode/core/parser.py` recognizes `ku_version`, `confidence`, and `lifecycle` fields; `config.ku_compat` flag (default `enabled: false`) controls auto-population on save; `confidence` is surfaced as a top-level key in search results when set. See `docs/HOW-MEMORY-WORKS.md` for field semantics.
 - `palinode import --from-vault <path>` — import existing Obsidian vault .md files into the palinode memory store. Infers category from PARA directory structure (Projects→`projects/`, Areas→`decisions/`, Resources→`research/`, Archive→`archive/`), daily-note filename patterns, and frontmatter `type:` field. Rewrites wikilinks to point at new slugged paths; orphaned links are left as-is with a warning. Supports `--apply` (default is dry-run), `--overwrite`, and `--into-category` override. Implemented in `palinode/import_/vault.py` and `palinode/cli/import_vault.py` (#236).
 - `flake.nix`, `nix/services/palinode-service.nix`, `nix/services/mcp-service.nix` — Nix flake and NixOS service modules for palinode API, watcher, and MCP server; community contribution welcome for refinement on real NixOS boxes (#38).
@@ -27,10 +101,11 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 - `tests/test_mcp_tool_count.py` — assertion test that keeps the `docs/MCP-SETUP.md` available-tools table in sync with `palinode/mcp.py` registered tools (#238).
 - `docs/LAUNCH-CHECKLIST.md` — pre-launch readiness checklist for v1.0 (#125).
 - `docs/MCP-SETUP.md` — Codex CLI section (#52).
-- `docs/INSTALL-CLAUDE-CODE.md` — Cursor and Codex CLI sections with skill paths and MCP config locations (#52).
+- `docs/INSTALL-CLAUDE-CODE.md` — Cursor, Antigravity IDE, and Codex CLI sections with skill paths and MCP config locations (#52).
 - `README.md` — "Supported Platforms" table listing all supported clients (#52).
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`) with unit-tests (Python 3.11/3.12 matrix), integration-tests, and security-scan jobs triggered on every push and PR (#121).
 - GitHub Actions post-merge sweep (`.github/workflows/main-ci.yml`) triggered on push to `main`; auto-opens a GitHub issue on regression (#198).
+- User-facing slash commands (`/wrap`, `/save`, `/ps`) audited and documented as deterministic — each command maps to a single named tool with a fixed argument shape; LLM synthesizes content, not routing (issue #138).
 - Integration test suite expanded to 24 tests in `tests/integration/test_api_roundtrip.py`, covering git-commit behaviour, CORS origin enforcement, additional path-traversal and null-byte cases, missing-field validation, and an explicit save-index-search-read roundtrip. (issue #120)
 - Retrieval-event instrumentation (#256): every `palinode_search`, `palinode_read`, `palinode_history`, and `palinode_blame` call now appends a structured `RetrievalEvent` to `.audit/retrievals.jsonl`, distinguishing `explicit` (tool-call) from `passive` (auto-inject) modes. No ranker behavior change.
 - `palinode retrieval-stats` CLI command reads the JSONL log and reports event totals, explicit/passive breakdown, top-20 retrieved files, retrieval-frequency distribution, and mean/median time-since-last-retrieval.
@@ -40,19 +115,19 @@ All notable changes to Palinode. Format follows [Keep a Changelog](https://keepa
 
 - `PalinodeAPI.__init__` now accepts an optional `client: httpx.Client` argument for test injection (#197).
 - `palinode_history` now accepts `detail="full"` for commit-level diffs (#32); `palinode_timeline` added as a deprecated alias.
-- Plugin TS schemas close the remaining plugin parity drift (#176) — 11 missing params added to `palinode_search` and `palinode_save`; all `known_drift` entries removed.
+- Plugin TypeScript schemas now match all canonical params (#176) — 11 missing params added to `palinode_search` and `palinode_save`; cross-surface parity contract is fully enforced for the plugin surface.
 - `docs/MCP-SETUP.md` — removed prose tool count; the available-tools table is now the source of truth; added `palinode_doctor` and `palinode_doctor_deep` rows (#238).
 - `docs/MCP-SETUP.md`, `docs/MCP-INSTALL-RECIPES.md`, `deploy/systemd/README.md`, `README.md` — clarified that `palinode-mcp-sse` serves streamable-HTTP at `/mcp/` (name is historical); use `"type": "http"` and always include the trailing slash (#258).
 - Nightly consolidation (`nightly.allowed_ops`) now includes `MERGE` (#202). The executor enforces a same-day guard: only facts sharing the same `[YYYY-MM-DD]` date prefix may be merged in a nightly run. Cross-date or undated MERGE proposals are rejected with a log warning and counted as `merge_rejected` in the stats dict.
 
 ### Fixed
 
-- `palinode init` HOOK_SCRIPT (the scaffolded SessionEnd hook) now uses `jq -s` slurp extraction for both MSG_COUNT and FIRST_PROMPT, eliminating the SIGPIPE class entirely. #257 fixed the same bug pattern in `examples/hooks/palinode-session-end.sh` but the scaffolded version in `palinode/cli/init.py` was missed; #267 closes that gap so `palinode init` produces a non-buggy hook on fresh installs.
 - Default `audit.log_path` is now resolved to an absolute path under `memory_dir` at config load time, eliminating the spurious `audit_log_writable` doctor warning on every fresh install (#254).
 - `mcp_config_homes` doctor check no longer reports a misleading "run \`palinode init\`" message when palinode is running over SSH stdio — detects `SSH_CONNECTION` and returns an informational result explaining the remote context (#255).
 - `0.0.0.0` binding warning is now suppressed when `PALINODE_API_BIND_INTENT=public` is set, allowing intentional network-exposed deployments (e.g., Tailscale) to start quietly. The systemd API service template sets this by default (#253).
 - `POST /save` now writes `last_updated` equal to `created_at` on initial file creation so freshly saved memories are not immediately flagged as stale by the freshness checker (#177).
 - `check_freshness()` now computes per-section hashes (matching the indexer) instead of a whole-body hash; multi-section files no longer always report stale (#203).
+- `palinode init` HOOK_SCRIPT (the scaffolded SessionEnd hook) now uses `jq -s` slurp extraction for both MSG_COUNT and FIRST_PROMPT, eliminating the SIGPIPE class entirely. #257 fixed the same bug pattern in `examples/hooks/palinode-session-end.sh` but the scaffolded version in `palinode/cli/init.py` was missed; #267 closes that gap so `palinode init` produces a non-buggy hook on fresh installs.
 
 ## [0.8.0] — 2026-04-27
 
@@ -124,7 +199,7 @@ Bug-fix release with small UX additions. Brings the public repo up to date with 
 
 ## [0.5.0] — 2026-04-10
 
-First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and LLM-driven consolidation with reviewable git-backed updates.
+First tagged release. Persistent memory for AI agents with git-versioned markdown as source of truth, hybrid SQLite-vec + FTS5 search, and LLM-driven consolidation applied by a deterministic executor.
 
 ### Added
 
@@ -135,7 +210,7 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 - File watcher daemon with debounced reindex and fault isolation
 
 **Consolidation and compaction**
-- Reviewable consolidation engine applying structured memory updates proposed by an LLM
+- Deterministic executor applying `KEEP` / `UPDATE` / `MERGE` / `SUPERSEDE` / `ARCHIVE` operations proposed by an LLM (LLM proposes structured operations, deterministic Python applies them — keeps every edit reviewable in git)
 - Weekly full-corpus consolidation with configurable LLM backend
 - Nightly lightweight consolidation pass (`--nightly` flag) bounded to `UPDATE`/`SUPERSEDE` for safer incremental updates
 - Model fallback chains — primary → fallback → fallback on timeout or HTTP error
@@ -167,7 +242,7 @@ First tagged release. Persistent memory for AI agents with git-versioned markdow
 - Exclude-paths list prevents search results from surfacing files in `.secrets`, `credentials`, etc.
 
 **Documentation**
-- Design and setup docs covering consolidation, provenance, and deployment
+- Architecture decision records covering the deterministic executor design
 - Remote MCP setup guides for Claude Code, Claude Desktop, Cursor, Zed
 - Example memory files (`examples/people/`, `examples/projects/`, `examples/decisions/`, `examples/insights/`)
 - Compaction walkthrough (`examples/compaction-demo/`) — a memory file across 3 passes with blame + diff output

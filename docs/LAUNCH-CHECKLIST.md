@@ -19,6 +19,7 @@ Checklist for v1.0 public launch readiness.
 
 ## Quality gates
 - [ ] `palinode doctor` passes on fresh install (no warnings)
+- [ ] `check-shipping-leaks.sh` clean on main
 - [ ] Pre-launch: resolve any open `P0`/`P1` labeled issues
 
 ## Hardening (M1)
@@ -43,4 +44,5 @@ Checklist for v1.0 public launch readiness.
 ## Platform parity
 - [ ] All 21 MCP tools verified working on Claude Code, Claude Desktop, Cursor
 - [ ] Codex CLI MCP config documented and smoke-tested
+- [ ] Antigravity IDE MCP config documented
 - [ ] `palinode mcp-config --diagnose` covers all supported client paths

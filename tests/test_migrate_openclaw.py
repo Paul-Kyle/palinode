@@ -1,14 +1,13 @@
 """Tests for palinode.migration.openclaw — OpenClaw MEMORY.md import."""
 from __future__ import annotations
 
-import subprocess
+import os
 import textwrap
 from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import yaml as _yaml
 
 from palinode.migration.openclaw import (
     _detect_type,
@@ -50,23 +49,12 @@ def memory_md_file(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def fake_memory_dir(tmp_path: Path) -> Path:
-
     mem = tmp_path / "palinode"
     mem.mkdir()
-
     # Minimal git repo so the git commit call doesn't crash
-    def run_git(args):
-        subprocess.run(
-            ["git"] + args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True
-        )
-
-    run_git(["init","-q",str(mem)])
-    run_git(["-C",str(mem),"config","user.email","test@test.com"])
-    run_git(["-C", str(mem), "config", "user.name", "Test"])
-
+    os.system(f"git init -q {mem} 2>/dev/null")
+    os.system(f"git -C {mem} config user.email 'test@test.com' 2>/dev/null")
+    os.system(f"git -C {mem} config user.name 'Test' 2>/dev/null")
     return mem
 
 
@@ -224,6 +212,7 @@ def test_migration_creates_log_file(
 def test_migration_frontmatter_fields(
     memory_md_file: Path, fake_memory_dir: Path
 ) -> None:
+    import yaml as _yaml
 
     with patch("palinode.migration.openclaw.config") as mock_cfg:
         mock_cfg.memory_dir = str(fake_memory_dir)

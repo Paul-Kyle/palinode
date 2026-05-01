@@ -1,6 +1,6 @@
 # Installing Palinode with Claude Code
 
-Palinode gives Claude Code persistent memory via MCP — 21 tools for searching, saving, diagnosing, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
+Palinode gives Claude Code persistent memory via MCP — 25 tools for searching, saving, diagnosing, and managing memories across sessions. The `palinode-session` skill auto-captures milestones and decisions during coding, so your memory stays fresh without manual effort.
 
 ## Prerequisites
 
@@ -210,6 +210,48 @@ The MCP server needs to be reachable from your IDE. Options:
 - **LAN**: Use the server's local IP if on the same network
 - **SSH tunnel**: `ssh -L 6341:localhost:6341 youruser@your-server` then use `http://localhost:6341/mcp`
 
+### Adding a token (recommended for non-loopback exposure)
+
+The Palinode **API server** (port 6340) supports an optional bearer-token
+auth layer — off by default for local dev, required when binding to a
+non-loopback address. If you reach Palinode from another machine (Tailscale,
+VPN, LAN), generate a token and configure both server and client.
+
+On the server:
+
+```bash
+# Generate once, save somewhere safe
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
+
+# Then export before starting palinode-api / the MCP server
+export PALINODE_API_TOKEN=<the-generated-value>
+# (Or set in the systemd unit's `Environment=` block.)
+```
+
+In your MCP client config, attach the token via the `headers` block:
+
+```json
+{
+  "mcpServers": {
+    "palinode": {
+      "url": "http://your-server:6341/mcp/",
+      "headers": {"Authorization": "Bearer <your-token>"}
+    }
+  }
+}
+```
+
+> **Scope today:** the auth check is enforced on the **API server** (port
+> 6340), which the MCP server proxies to. The **MCP server itself** (port
+> 6341) does not yet enforce auth at the HTTP transport — that's a
+> follow-up. If you expose port 6341 directly to the network, front it
+> with a reverse proxy or restrict access via Tailscale ACLs / a firewall
+> until the MCP-side auth lands.
+
+If you set `PALINODE_API_BIND_INTENT=public` (the explicit public-exposure
+flag) without also setting `PALINODE_API_TOKEN`, the API server refuses to
+start with a clear error message. Generate the token first, then set both.
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -218,6 +260,9 @@ The MCP server needs to be reachable from your IDE. Options:
 | `PALINODE_MCP_SSE_PORT` | `6341` | Port for MCP HTTP server |
 | `PALINODE_API_HOST` | `127.0.0.1` | Where MCP server sends API requests |
 | `PALINODE_API_PORT` | `6340` | API server port |
+| `PALINODE_API_TOKEN` | (unset) | If set, every API request must carry `Authorization: Bearer <value>` (`/health` excepted). |
+| `PALINODE_API_TOKEN_FILE` | (unset) | Path to a file containing the token. Used when `PALINODE_API_TOKEN` is unset. Whitespace stripped. |
+| `PALINODE_API_BIND_INTENT` | (unset) | Set to `public` to confirm intentional non-loopback bind. Requires `PALINODE_API_TOKEN`; the API refuses to start otherwise. |
 
 ---
 
@@ -301,6 +346,10 @@ If something doesn't look right, run `palinode doctor` from your terminal for a 
 | `palinode_doctor` | Fast diagnostic — 18+ checks across paths, services, config, index |
 | `palinode_doctor_deep` | Full diagnostic with canary write test (~10–15s) |
 | `palinode_prompt` | List, show, or activate versioned LLM prompts |
+| `palinode_cluster_neighbors` | Surface implicit related-file relationships not yet captured by `[[wikilinks]]` |
+| `palinode_topic_coverage` | Before-ingest check: is this topic phrase already covered by a wiki page? |
+| `palinode_depends` | Dependency tree for milestones/tasks; `unblocked=true` lists items ready to work on |
+| `palinode_timeline` | Deprecated alias — use `palinode_history` with `detail="full"` instead |
 
 ---
 
@@ -341,6 +390,20 @@ cp -r /path/to/palinode/skill/palinode-session .cursor/skills/
 ```
 
 Cursor does not use `CLAUDE.md` — add memory instructions to your `.cursorrules` or project README if desired.
+
+---
+
+## Antigravity IDE
+
+Antigravity uses a native 3-dot MCP menu for server registration. No JSON config file editing needed.
+
+1. Open the 3-dot MCP menu → **Add Server** → enter `http://your-server:6341/mcp/` as the endpoint URL.
+2. Session skill installs under `.agent/skills/`:
+
+```bash
+mkdir -p .agent/skills
+cp -r /path/to/palinode/skill/palinode-session .agent/skills/
+```
 
 ---
 

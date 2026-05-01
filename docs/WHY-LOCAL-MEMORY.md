@@ -18,7 +18,7 @@ Cloud vendors will ship memory. It will live on their servers, be opaque, and be
 | Portability | Locked to one platform | Works across any MCP client |
 | Ownership | Vendor controls retention | You control everything |
 | Offline access | No | `cat` and `grep` always work |
-| Consolidation | Black box | Reviewable file updates with git provenance |
+| Consolidation | Black box | Deterministic executor with reviewable ops |
 
 ## The case for transparency
 
